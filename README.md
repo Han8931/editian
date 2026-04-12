@@ -114,5 +114,7 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - Editing mode / AI Mode
 - Close button remove
 - Editing tools
+- Page info
+- Project directory
 
 

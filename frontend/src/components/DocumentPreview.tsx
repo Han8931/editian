@@ -91,13 +91,17 @@ export default function DocumentPreview({
   // ── Manual mode state ────────────────────────────────────────────────────
   // Tracks the currently-edited DOM element for inline DOCX editing
   const manualEditRef = useRef<ManualEditRef>(null)
+  // True while the user has unsaved typed changes (cleared by auto-save or blur)
+  const [hasPendingEdit, setHasPendingEdit] = useState(false)
+  // Debounce timer for auto-save
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Separate display HTML — only updated when not actively editing, to avoid
   // clobbering an active contentEditable when a prior edit's API call returns
   const [displayHtml, setDisplayHtml] = useState<string>(doc.html ?? '')
 
   // Reset when the document itself changes (workspace switch / upload)
   useEffect(() => {
-    if (manualEditRef.current) cancelDocxEdit()
+    if (manualEditRef.current) commitDocxEdit()
     setDisplayHtml(doc.html ?? '')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.file_id])
@@ -116,6 +120,37 @@ export default function DocumentPreview({
 
   // ── DOCX manual edit helpers ─────────────────────────────────────────────
 
+  /** Send the current text to the server without closing the editor. */
+  function autoSaveDocxEdit() {
+    const ref = manualEditRef.current
+    if (!ref || ref.isCancelled) return
+    const revised = ref.el.innerText.trim()
+    const original = ref.original.trim()
+    if (revised === original) return
+
+    // Advance the baseline so the next save compares from here, not the start
+    ref.original = revised
+    setHasPendingEdit(false)
+
+    onDirectEdit?.({
+      scope: { type: 'paragraphs', paragraph_indices: [ref.index] },
+      original,
+      revised,
+    })
+  }
+
+  function scheduleAutoSave() {
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(() => {
+      autoSaveTimer.current = null
+      autoSaveDocxEdit()
+    }, 800)
+  }
+
+  function clearAutoSaveTimer() {
+    if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null }
+  }
+
   function startDocxEdit(el: HTMLElement, paraIdx: number, clientX: number, clientY: number) {
     // Already editing this exact element — let browser handle cursor natively
     if (manualEditRef.current?.el === el) return
@@ -131,15 +166,23 @@ export default function DocumentPreview({
     el.style.backgroundColor = '#eff6ff'
     el.focus()
 
+    // Auto-save 800 ms after the user stops typing
+    const onInput = () => { setHasPendingEdit(true); scheduleAutoSave() }
+    el.addEventListener('input', onInput)
+    ;(el as any).__editInputListener = onInput
+
     // Compute caret position from pointer and apply after focus settles
     const savedX = clientX, savedY = clientY
     requestAnimationFrame(() => placeCaret(savedX, savedY))
   }
 
+  /** Close the editor and flush any remaining unsaved text. */
   function commitDocxEdit() {
+    clearAutoSaveTimer()
     const ref = manualEditRef.current
     if (!ref) return
     manualEditRef.current = null
+    setHasPendingEdit(false)
 
     const { el, index, original, isCancelled } = ref
     el.contentEditable = 'false'
@@ -147,14 +190,16 @@ export default function DocumentPreview({
     el.style.borderRadius = ''
     el.style.backgroundColor = ''
 
+    const listener = (el as any).__editInputListener
+    if (listener) { el.removeEventListener('input', listener); delete (el as any).__editInputListener }
+
     if (isCancelled) {
-      // Restore original text in place without hitting the API
       el.innerText = original
       return
     }
 
     const revised = el.innerText.trim()
-    if (revised === original.trim()) return  // unchanged
+    if (revised === original.trim()) return  // already saved by auto-save
 
     onDirectEdit?.({
       scope: { type: 'paragraphs', paragraph_indices: [index] },
@@ -164,6 +209,7 @@ export default function DocumentPreview({
   }
 
   function cancelDocxEdit() {
+    clearAutoSaveTimer()
     if (!manualEditRef.current) return
     manualEditRef.current.isCancelled = true
     commitDocxEdit()
@@ -256,6 +302,14 @@ export default function DocumentPreview({
 
   // ── Manual mode toolbar ─────────────────────────────────────────────────
 
+  function handleManualSave() {
+    if (doc.file_type === 'docx') {
+      commitDocxEdit()
+    } else {
+      saveEdit()
+    }
+  }
+
   function ManualToolbar() {
     if (!isManual) return null
 
@@ -296,10 +350,21 @@ export default function DocumentPreview({
         >
           <s className="text-sm leading-none">S</s>
         </button>
-        <div className="w-px h-4 bg-gray-200 mx-1" />
-        <span className="text-xs text-gray-400">
-          Click to edit · blur or Esc to save/cancel
-        </span>
+        <div className="flex-1" />
+        {hasPendingEdit && (
+          <span className="text-xs text-amber-500 mr-2 select-none">Unsaved changes</span>
+        )}
+        <button
+          onMouseDown={(e) => { e.preventDefault(); handleManualSave() }}
+          title="Save now (⌘S)"
+          className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors select-none ${
+            hasPendingEdit
+              ? 'bg-blue-500 text-white hover:bg-blue-600'
+              : 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600'
+          }`}
+        >
+          Save
+        </button>
       </div>
     )
   }
@@ -422,7 +487,6 @@ export default function DocumentPreview({
                 if (!structureIndices.has(idx)) return
                 startDocxEdit(el, idx, e.clientX, e.clientY)
               } else {
-                if (editing) return
                 const cellEl = (e.target as Element).closest('[data-cell-ref]')
                 if (cellEl) {
                   const ref = cellEl.getAttribute('data-cell-ref')!
@@ -430,18 +494,20 @@ export default function DocumentPreview({
                   if (m) {
                     const tableIdx = +m[1]
                     onTableSelect?.(selectedTable === tableIdx ? null : tableIdx)
-                    onSelectionChange([])
                   }
                   return
                 }
                 const idx = paraIndexAt(e.clientX, e.clientY)
-                if (idx === null || !structureIndices.has(idx)) return
+                if (idx === null || !structureIndices.has(idx)) {
+                  // Clicked whitespace or outside the page — clear all selection
+                  onTableSelect?.(null)
+                  return
+                }
                 isDragging.current = true
                 anchorIdx.current = idx
                 onSelectionChange(
                   selectedIndices.length === 1 && selectedIndices[0] === idx ? [] : [idx],
                 )
-                onTableSelect?.(null)
               }
             }}
             onMouseMove={isManual ? undefined : (e) => {
@@ -452,26 +518,6 @@ export default function DocumentPreview({
             }}
             onMouseUp={isManual ? undefined : stopDrag}
             onMouseLeave={isManual ? undefined : stopDrag}
-            onDoubleClick={isManual ? undefined : (e) => {
-              const cellEl = (e.target as Element).closest('[data-cell-ref]')
-              if (cellEl) {
-                const ref = cellEl.getAttribute('data-cell-ref')!
-                const m = ref.match(/t(\d+)r(\d+)c(\d+)/)
-                if (m) {
-                  const text = (cellEl as HTMLElement).innerText?.trim() ?? ''
-                  setEditing({ index: -1, original: text, text, cellRef: { t: +m[1], r: +m[2], c: +m[3] } })
-                  onSelectionChange([])
-                }
-                return
-              }
-              const el = (e.target as Element).closest('[data-para-index]')
-              if (!el) return
-              const idx = Number(el.getAttribute('data-para-index'))
-              const para = paragraphs.find((p) => p.index === idx)
-              if (!para) return
-              setEditing({ index: idx, original: para.text, text: para.text })
-              onSelectionChange([])
-            }}
             onBlur={isManual ? (e: React.FocusEvent<HTMLDivElement>) => {
               const ref = manualEditRef.current
               if (!ref) return
@@ -482,11 +528,13 @@ export default function DocumentPreview({
               commitDocxEdit()
             } : undefined}
             onKeyDown={isManual ? (e) => {
-              if (!manualEditRef.current) return
-              if (e.key === 'Escape') {
+              if (e.key === 'Escape' && manualEditRef.current) {
                 e.preventDefault()
                 e.stopPropagation()
                 cancelDocxEdit()
+              } else if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                commitDocxEdit()
               }
             } : undefined}
           >
@@ -516,11 +564,12 @@ export default function DocumentPreview({
       {ManualToolbar()}
       {/* Slide canvas area */}
       <div
-        className="flex-1 flex items-center justify-center p-6 overflow-auto"
+        className="flex-1 flex items-center justify-center p-6 overflow-auto relative"
         onMouseUp={stopDrag}
         onMouseLeave={stopDrag}
       >
-        <div className="w-full max-w-4xl">
+        {ZoomControls()}
+        <div className="w-full max-w-4xl" style={{ zoom: `${zoom}%` }}>
           {/* Aspect-ratio shell — height driven by padding-top trick */}
           <div
             ref={slideContainerRef}
@@ -601,18 +650,12 @@ export default function DocumentPreview({
                             ? []
                             : [shape.index],
                         )
-                        onTableSelect?.(null)
                       }}
                       onMouseEnter={isImage || isManual ? undefined : () => {
                         if (!isDragging.current || anchorIdx.current === null) return
                         onSelectionChange(
                           rangeOf(anchorIdx.current, pos).map((p) => slide.shapes[p].index),
                         )
-                      }}
-                      onDoubleClick={isImage || isManual ? undefined : (e) => {
-                        e.stopPropagation()
-                        setEditing({ index: shape.index, original: shape.text, text: shape.text })
-                        onSelectionChange([])
                       }}
                       onBlur={isManual && isEditing ? (e) => {
                         const newText = (e.currentTarget as HTMLElement).innerText.trim()
@@ -631,6 +674,9 @@ export default function DocumentPreview({
                           e.preventDefault()
                           e.stopPropagation()
                           setEditing(null)  // cancel — React restores original text on re-render
+                        } else if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault()
+                          saveEdit()
                         }
                       } : undefined}
                     >

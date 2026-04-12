@@ -174,9 +174,16 @@ export default function App() {
 
   async function handleDirectEdit(revision: Revision) {
     if (!doc) return
+    // Capture IDs before the await — activeId may change if user switches workspaces
+    // while the API call is in flight.
+    const targetId = activeId
+    const fileId   = doc.file_id
     setEditError(null)
     try {
-      patchActive({ doc: await applyRevisions(doc.file_id, [revision]), selectedIndices: [] })
+      const newDoc = await applyRevisions(fileId, [revision])
+      setWorkspaces((prev) =>
+        prev.map((w) => w.id === targetId ? { ...w, doc: newDoc, selectedIndices: [] } : w)
+      )
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Edit failed.')
     }
@@ -390,9 +397,9 @@ export default function App() {
               currentSlide={active.currentSlide}
               onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [] })}
               selectedIndices={active.selectedIndices}
-              onSelectionChange={(indices) => patchActive({ selectedIndices: indices, selectedTable: indices.length > 0 ? null : active.selectedTable })}
+              onSelectionChange={(indices) => patchActive({ selectedIndices: indices, selectedTable: null })}
               selectedTable={active.selectedTable}
-              onTableSelect={(idx) => patchActive({ selectedTable: idx, selectedIndices: idx !== null ? [] : active.selectedIndices })}
+              onTableSelect={(idx) => patchActive({ selectedTable: idx, selectedIndices: [] })}
               onDirectEdit={handleDirectEdit}
             />
 

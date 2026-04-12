@@ -25,8 +25,8 @@ export default function ModePanel({ doc, style }: Props) {
           <div className="text-xs font-semibold uppercase tracking-wider text-blue-700">How to edit</div>
           <div className="mt-2 space-y-1.5 text-sm text-blue-900">
             <p>Click on any {isPptx ? 'text box' : 'paragraph'} to place the cursor.</p>
-            <p>Type to edit — the cursor appears at your click position.</p>
-            <p>Click elsewhere or press <kbd className="px-1 py-0.5 bg-blue-100 rounded text-xs font-mono">Esc</kbd> to finish.</p>
+            <p>Type to edit — changes are saved automatically.</p>
+            <p>Press <kbd className="px-1 py-0.5 bg-blue-100 rounded text-xs font-mono">Esc</kbd> to discard changes to the current element.</p>
           </div>
         </div>
 
