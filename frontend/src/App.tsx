@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import FileUpload from './components/FileUpload'
 import DocumentPreview from './components/DocumentPreview'
 import Sidebar from './components/Sidebar'
+import ModePanel from './components/ModePanel'
 import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
 import type { UploadResponse, Revision, Workspace } from './types'
@@ -17,6 +18,7 @@ const WORKSPACE_DEFAULT = 208
 const LS_WORKSPACES = 'editian_workspaces'
 const LS_ACTIVE     = 'editian_active_workspace'
 const LS_WS_WIDTH   = 'editian_workspace_width'
+const LS_MODE       = 'editian_mode'
 
 // Stored shape: minimal — no doc (too large for localStorage)
 interface StoredWorkspace { id: string; name: string; fileId: string | null; parentId?: string }
@@ -76,6 +78,13 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
 
   useEffect(() => { localStorage.setItem(LS_WS_WIDTH, String(workspaceWidth)) }, [workspaceWidth])
+
+  // ── Mode ───────────────────────────────────────────────────────────────
+  const [mode, setMode] = useState<'ai' | 'manual'>(() => {
+    const saved = localStorage.getItem(LS_MODE)
+    return saved === 'manual' ? 'manual' : 'ai'
+  })
+  useEffect(() => { localStorage.setItem(LS_MODE, mode) }, [mode])
 
   // ── UI state ───────────────────────────────────────────────────────────
   const [showDownload, setShowDownload] = useState(false)
@@ -284,6 +293,26 @@ export default function App() {
             <button onClick={handleRedo} disabled={!doc?.can_redo} title="Redo (⌘⇧Z)"
               className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↪</button>
           </div>
+          {doc && (
+            <>
+              <div className="w-px h-4 bg-gray-200" />
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                {(['ai', 'manual'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMode(m)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                      mode === m
+                        ? 'bg-white text-gray-800 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {m === 'ai' ? 'AI' : 'Manual'}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="w-px h-4 bg-gray-200" />
           {doc && (
             <div className="relative">
@@ -357,6 +386,7 @@ export default function App() {
           <>
             <DocumentPreview
               doc={doc}
+              mode={mode}
               currentSlide={active.currentSlide}
               onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [] })}
               selectedIndices={active.selectedIndices}
@@ -376,15 +406,22 @@ export default function App() {
               }}
             />
 
-            <Sidebar
-              doc={doc}
-              currentSlide={active.currentSlide}
-              onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [] })}
-              onDocumentUpdate={handleDocumentUpdate}
-              selectedIndices={active.selectedIndices}
-              selectedTable={active.selectedTable}
-              style={{ width: sidebarWidth, minWidth: sidebarWidth }}
-            />
+            {mode === 'manual' ? (
+              <ModePanel
+                doc={doc}
+                style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+              />
+            ) : (
+              <Sidebar
+                doc={doc}
+                currentSlide={active.currentSlide}
+                onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [] })}
+                onDocumentUpdate={handleDocumentUpdate}
+                selectedIndices={active.selectedIndices}
+                selectedTable={active.selectedTable}
+                style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+              />
+            )}
           </>
         )}
       </div>

@@ -112,5 +112,7 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - Layout change
 - Revising animation...
 - Editing mode / AI Mode
+- Close button remove
+- Editing tools
 
 

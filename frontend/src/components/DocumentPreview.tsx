@@ -5,6 +5,7 @@ interface CellRef { t: number; r: number; c: number }
 
 interface Props {
   doc: UploadResponse
+  mode?: 'ai' | 'manual'
   currentSlide: number
   onSlideChange: (index: number) => void
   selectedIndices: number[]
@@ -21,6 +22,13 @@ type EditingState = {
   cellRef?: { t: number; r: number; c: number }
 } | null
 
+type ManualEditRef = {
+  el: HTMLElement
+  index: number
+  original: string
+  isCancelled: boolean
+} | null
+
 /** Returns the data-para-index of the element under the pointer, or null. */
 function paraIndexAt(x: number, y: number): number | null {
   const el = document.elementFromPoint(x, y)
@@ -34,8 +42,36 @@ function rangeOf(a: number, b: number): number[] {
   return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i)
 }
 
+/** Place the text caret at the given viewport coordinates (cross-browser). */
+function placeCaret(clientX: number, clientY: number) {
+  try {
+    const doc = document as any
+    if (doc.caretRangeFromPoint) {
+      const range = doc.caretRangeFromPoint(clientX, clientY) as Range
+      if (range) {
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      }
+    } else if (doc.caretPositionFromPoint) {
+      const pos = doc.caretPositionFromPoint(clientX, clientY)
+      if (pos) {
+        const range = document.createRange()
+        range.setStart(pos.offsetNode, pos.offset)
+        range.collapse(true)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      }
+    }
+  } catch {
+    // Caret placement failed — cursor will be at beginning, acceptable fallback
+  }
+}
+
 export default function DocumentPreview({
   doc,
+  mode = 'ai',
   currentSlide,
   onSlideChange,
   selectedIndices,
@@ -44,20 +80,97 @@ export default function DocumentPreview({
   onTableSelect,
   onDirectEdit,
 }: Props) {
+  const isManual = mode === 'manual'
+
   const isDragging = useRef(false)
   const anchorIdx = useRef<number | null>(null)
   const [editing, setEditing] = useState<EditingState>(null)
   const editTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [zoom, setZoom] = useState(100)
 
-  // PPTX: auto-scale slide canvas to fit container width
-  const slideContainerRef = useRef<HTMLDivElement>(null)
-  const [slideScale, setSlideScale] = useState(1)
-  const pptxStructure = doc.file_type === 'pptx' ? (doc.structure as import('../types').PptxStructure) : null
-  const naturalW = pptxStructure ? pptxStructure.slide_width / 12700 : 960
-  const naturalH = pptxStructure ? pptxStructure.slide_height / 12700 : 540
+  // ── Manual mode state ────────────────────────────────────────────────────
+  // Tracks the currently-edited DOM element for inline DOCX editing
+  const manualEditRef = useRef<ManualEditRef>(null)
+  // Separate display HTML — only updated when not actively editing, to avoid
+  // clobbering an active contentEditable when a prior edit's API call returns
+  const [displayHtml, setDisplayHtml] = useState<string>(doc.html ?? '')
 
-  // Focus the edit textarea and place cursor at end when editing starts
+  // Reset when the document itself changes (workspace switch / upload)
+  useEffect(() => {
+    if (manualEditRef.current) cancelDocxEdit()
+    setDisplayHtml(doc.html ?? '')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.file_id])
+
+  // Update display when doc content changes (after API edits), but NOT while editing
+  useEffect(() => {
+    if (manualEditRef.current) return
+    setDisplayHtml(doc.html ?? '')
+  }, [doc.html])
+
+  // Commit any pending DOCX edit when switching from manual → AI mode
+  useEffect(() => {
+    if (!isManual && manualEditRef.current) commitDocxEdit()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isManual])
+
+  // ── DOCX manual edit helpers ─────────────────────────────────────────────
+
+  function startDocxEdit(el: HTMLElement, paraIdx: number, clientX: number, clientY: number) {
+    // Already editing this exact element — let browser handle cursor natively
+    if (manualEditRef.current?.el === el) return
+    // Commit any other element currently being edited
+    if (manualEditRef.current) commitDocxEdit()
+
+    const original = el.innerText
+    manualEditRef.current = { el, index: paraIdx, original, isCancelled: false }
+
+    el.contentEditable = 'true'
+    el.style.outline = '2px solid #3b82f6'
+    el.style.borderRadius = '3px'
+    el.style.backgroundColor = '#eff6ff'
+    el.focus()
+
+    // Compute caret position from pointer and apply after focus settles
+    const savedX = clientX, savedY = clientY
+    requestAnimationFrame(() => placeCaret(savedX, savedY))
+  }
+
+  function commitDocxEdit() {
+    const ref = manualEditRef.current
+    if (!ref) return
+    manualEditRef.current = null
+
+    const { el, index, original, isCancelled } = ref
+    el.contentEditable = 'false'
+    el.style.outline = ''
+    el.style.borderRadius = ''
+    el.style.backgroundColor = ''
+
+    if (isCancelled) {
+      // Restore original text in place without hitting the API
+      el.innerText = original
+      return
+    }
+
+    const revised = el.innerText.trim()
+    if (revised === original.trim()) return  // unchanged
+
+    onDirectEdit?.({
+      scope: { type: 'paragraphs', paragraph_indices: [index] },
+      original: original.trim(),
+      revised,
+    })
+  }
+
+  function cancelDocxEdit() {
+    if (!manualEditRef.current) return
+    manualEditRef.current.isCancelled = true
+    commitDocxEdit()
+  }
+
+  // ── Shared AI-mode editing (PPTX + old DOCX double-click) ───────────────
+
   const editingKey = editing
     ? editing.cellRef
       ? `cell-${editing.cellRef.t}-${editing.cellRef.r}-${editing.cellRef.c}`
@@ -90,6 +203,13 @@ export default function DocumentPreview({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [doc, currentSlide, editing, onSlideChange, onSelectionChange])
+
+  // PPTX: auto-scale slide canvas to fit container width
+  const slideContainerRef = useRef<HTMLDivElement>(null)
+  const [slideScale, setSlideScale] = useState(1)
+  const pptxStructure = doc.file_type === 'pptx' ? (doc.structure as import('../types').PptxStructure) : null
+  const naturalW = pptxStructure ? pptxStructure.slide_width / 12700 : 960
+  const naturalH = pptxStructure ? pptxStructure.slide_height / 12700 : 540
 
   useEffect(() => {
     const el = slideContainerRef.current
@@ -134,6 +254,56 @@ export default function DocumentPreview({
     )
   }
 
+  // ── Manual mode toolbar ─────────────────────────────────────────────────
+
+  function ManualToolbar() {
+    if (!isManual) return null
+
+    function fmt(cmd: string) {
+      document.execCommand(cmd, false, undefined)
+      manualEditRef.current?.el.focus()
+    }
+
+    const btnBase = 'w-8 h-8 flex items-center justify-center rounded transition-colors hover:bg-gray-100 text-gray-700 select-none'
+
+    return (
+      <div className="flex items-center gap-0.5 px-4 py-1.5 bg-white border-b border-gray-200 flex-shrink-0">
+        <button
+          onMouseDown={(e) => { e.preventDefault(); fmt('bold') }}
+          title="Bold (⌘B)"
+          className={btnBase}
+        >
+          <strong className="text-sm leading-none">B</strong>
+        </button>
+        <button
+          onMouseDown={(e) => { e.preventDefault(); fmt('italic') }}
+          title="Italic (⌘I)"
+          className={btnBase}
+        >
+          <em className="text-sm leading-none not-italic font-medium" style={{ fontStyle: 'italic' }}>I</em>
+        </button>
+        <button
+          onMouseDown={(e) => { e.preventDefault(); fmt('underline') }}
+          title="Underline (⌘U)"
+          className={btnBase}
+        >
+          <u className="text-sm leading-none">U</u>
+        </button>
+        <button
+          onMouseDown={(e) => { e.preventDefault(); fmt('strikeThrough') }}
+          title="Strikethrough"
+          className={btnBase}
+        >
+          <s className="text-sm leading-none">S</s>
+        </button>
+        <div className="w-px h-4 bg-gray-200 mx-1" />
+        <span className="text-xs text-gray-400">
+          Click to edit · blur or Esc to save/cancel
+        </span>
+      </div>
+    )
+  }
+
   function stopDrag() {
     isDragging.current = false
   }
@@ -163,9 +333,9 @@ export default function DocumentPreview({
     setEditing(null)
   }
 
-  // Shared editing panel rendered at the bottom of the preview
+  // AI-mode bottom panel (not shown in manual mode)
   function EditingPanel() {
-    if (!editing) return null
+    if (!editing || isManual) return null
     return (
       <div className="bg-white border-t border-gray-200 shadow-lg px-8 py-4 flex-shrink-0">
         <div className="max-w-3xl mx-auto flex flex-col gap-2">
@@ -211,94 +381,126 @@ export default function DocumentPreview({
     const structureIndices = new Set(paragraphs.map((p) => p.index))
 
     const highlightCSS =
-      selectedIndices.length > 0
+      !isManual && selectedIndices.length > 0
         ? selectedIndices.map((i) => `[data-para-index="${i}"]`).join(',') +
           '{ background-color: #dbeafe !important; outline: 1px solid #93c5fd; border-radius: 3px; }'
         : ''
 
-    // Highlight every cell in the selected table using prefix match on data-cell-ref
     const cellHighlightCSS =
-      selectedTable != null
+      !isManual && selectedTable != null
         ? `[data-cell-ref^="t${selectedTable}r"] { background-color: #dbeafe !important; outline: 1px solid #93c5fd; }`
         : ''
 
-    // Highlight the element being edited (overrides table selection)
-    const editHighlightCSS = editing
-      ? editing.cellRef
-        ? `[data-cell-ref="t${editing.cellRef.t}r${editing.cellRef.r}c${editing.cellRef.c}"] { outline: 2px solid #3b82f6 !important; background-color: #eff6ff !important; border-radius: 3px; }`
-        : `[data-para-index="${editing.index}"] { outline: 2px solid #3b82f6 !important; border-radius: 3px; }`
-      : ''
+    const editHighlightCSS =
+      !isManual && editing
+        ? editing.cellRef
+          ? `[data-cell-ref="t${editing.cellRef.t}r${editing.cellRef.r}c${editing.cellRef.c}"] { outline: 2px solid #3b82f6 !important; background-color: #eff6ff !important; border-radius: 3px; }`
+          : `[data-para-index="${editing.index}"] { outline: 2px solid #3b82f6 !important; border-radius: 3px; }`
+        : ''
+
+    // In manual mode paragraphs should show a text cursor, not a pointer
+    const manualCursorCSS = isManual ? '[data-para-index] { cursor: text; }' : ''
 
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
+        {ManualToolbar()}
         <div className="flex-1 relative overflow-hidden">
-        <ZoomControls />
-        <div
-          className="h-full overflow-auto p-8 select-none"
-          onMouseDown={(e) => {
-            if (editing) return
-            // Table cell click → select whole table
-            const cellEl = (e.target as Element).closest('[data-cell-ref]')
-            if (cellEl) {
-              const ref = cellEl.getAttribute('data-cell-ref')!
-              const m = ref.match(/t(\d+)/)
-              if (m) {
-                const tableIdx = +m[1]
-                onTableSelect?.(selectedTable === tableIdx ? null : tableIdx)
-                onSelectionChange([])
-              }
-              return
-            }
-            const idx = paraIndexAt(e.clientX, e.clientY)
-            if (idx === null || !structureIndices.has(idx)) return
-            isDragging.current = true
-            anchorIdx.current = idx
-            onSelectionChange(
-              selectedIndices.length === 1 && selectedIndices[0] === idx ? [] : [idx],
-            )
-            onTableSelect?.(null)
-          }}
-          onMouseMove={(e) => {
-            if (!isDragging.current || anchorIdx.current === null) return
-            const idx = paraIndexAt(e.clientX, e.clientY)
-            if (idx === null) return
-            onSelectionChange(rangeOf(anchorIdx.current, idx).filter((i) => structureIndices.has(i)))
-          }}
-          onMouseUp={stopDrag}
-          onMouseLeave={stopDrag}
-          onDoubleClick={(e) => {
-            // Table cell editing
-            const cellEl = (e.target as Element).closest('[data-cell-ref]')
-            if (cellEl) {
-              const ref = cellEl.getAttribute('data-cell-ref')!
-              const m = ref.match(/t(\d+)r(\d+)c(\d+)/)
-              if (m) {
-                const text = (cellEl as HTMLElement).innerText?.trim() ?? ''
-                setEditing({ index: -1, original: text, text, cellRef: { t: +m[1], r: +m[2], c: +m[3] } })
-                onSelectionChange([])
-              }
-              return
-            }
-            // Paragraph editing
-            const el = (e.target as Element).closest('[data-para-index]')
-            if (!el) return
-            const idx = Number(el.getAttribute('data-para-index'))
-            const para = paragraphs.find((p) => p.index === idx)
-            if (!para) return
-            setEditing({ index: idx, original: para.text, text: para.text })
-            onSelectionChange([])
-          }}
-        >
-          {highlightCSS && <style>{highlightCSS}</style>}
-          {cellHighlightCSS && <style>{cellHighlightCSS}</style>}
-          {editHighlightCSS && <style>{editHighlightCSS}</style>}
+          <ZoomControls />
           <div
-            className="max-w-3xl mx-auto bg-white shadow-md rounded-xl p-12 min-h-[calc(100vh-8rem)] docx-preview"
-            style={{ zoom: `${zoom}%` }}
+            className={`h-full overflow-auto p-8 ${isManual ? '' : 'select-none'}`}
+            onMouseDown={(e) => {
+              if (isManual) {
+                // Skip table cells — not supported in manual mode v1
+                if ((e.target as Element).closest('[data-cell-ref]')) return
+                const el = (e.target as Element).closest('[data-para-index]') as HTMLElement | null
+                if (!el) {
+                  // Clicked outside any paragraph — commit current edit
+                  if (manualEditRef.current) commitDocxEdit()
+                  return
+                }
+                const idx = Number(el.getAttribute('data-para-index'))
+                if (!structureIndices.has(idx)) return
+                startDocxEdit(el, idx, e.clientX, e.clientY)
+              } else {
+                if (editing) return
+                const cellEl = (e.target as Element).closest('[data-cell-ref]')
+                if (cellEl) {
+                  const ref = cellEl.getAttribute('data-cell-ref')!
+                  const m = ref.match(/t(\d+)/)
+                  if (m) {
+                    const tableIdx = +m[1]
+                    onTableSelect?.(selectedTable === tableIdx ? null : tableIdx)
+                    onSelectionChange([])
+                  }
+                  return
+                }
+                const idx = paraIndexAt(e.clientX, e.clientY)
+                if (idx === null || !structureIndices.has(idx)) return
+                isDragging.current = true
+                anchorIdx.current = idx
+                onSelectionChange(
+                  selectedIndices.length === 1 && selectedIndices[0] === idx ? [] : [idx],
+                )
+                onTableSelect?.(null)
+              }
+            }}
+            onMouseMove={isManual ? undefined : (e) => {
+              if (!isDragging.current || anchorIdx.current === null) return
+              const idx = paraIndexAt(e.clientX, e.clientY)
+              if (idx === null) return
+              onSelectionChange(rangeOf(anchorIdx.current, idx).filter((i) => structureIndices.has(i)))
+            }}
+            onMouseUp={isManual ? undefined : stopDrag}
+            onMouseLeave={isManual ? undefined : stopDrag}
+            onDoubleClick={isManual ? undefined : (e) => {
+              const cellEl = (e.target as Element).closest('[data-cell-ref]')
+              if (cellEl) {
+                const ref = cellEl.getAttribute('data-cell-ref')!
+                const m = ref.match(/t(\d+)r(\d+)c(\d+)/)
+                if (m) {
+                  const text = (cellEl as HTMLElement).innerText?.trim() ?? ''
+                  setEditing({ index: -1, original: text, text, cellRef: { t: +m[1], r: +m[2], c: +m[3] } })
+                  onSelectionChange([])
+                }
+                return
+              }
+              const el = (e.target as Element).closest('[data-para-index]')
+              if (!el) return
+              const idx = Number(el.getAttribute('data-para-index'))
+              const para = paragraphs.find((p) => p.index === idx)
+              if (!para) return
+              setEditing({ index: idx, original: para.text, text: para.text })
+              onSelectionChange([])
+            }}
+            onBlur={isManual ? (e: React.FocusEvent<HTMLDivElement>) => {
+              const ref = manualEditRef.current
+              if (!ref) return
+              // Only commit if the element losing focus is our editing element
+              if ((e.target as Node) !== ref.el) return
+              // Don't commit if focus moves within the same element
+              if (ref.el.contains(e.relatedTarget as Node)) return
+              commitDocxEdit()
+            } : undefined}
+            onKeyDown={isManual ? (e) => {
+              if (!manualEditRef.current) return
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                cancelDocxEdit()
+              }
+            } : undefined}
           >
-            <div dangerouslySetInnerHTML={{ __html: doc.html ?? '' }} />
+            {highlightCSS && <style>{highlightCSS}</style>}
+            {cellHighlightCSS && <style>{cellHighlightCSS}</style>}
+            {editHighlightCSS && <style>{editHighlightCSS}</style>}
+            {manualCursorCSS && <style>{manualCursorCSS}</style>}
+            <div
+              className="max-w-3xl mx-auto bg-white shadow-md rounded-xl p-12 min-h-[calc(100vh-8rem)] docx-preview"
+              style={{ zoom: `${zoom}%` }}
+            >
+              <div dangerouslySetInnerHTML={{ __html: displayHtml }} />
+            </div>
           </div>
-        </div>
         </div>
         {EditingPanel()}
       </div>
@@ -311,6 +513,7 @@ export default function DocumentPreview({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
+      {ManualToolbar()}
       {/* Slide canvas area */}
       <div
         className="flex-1 flex items-center justify-center p-6 overflow-auto"
@@ -343,7 +546,7 @@ export default function DocumentPreview({
               {slide?.shapes.length ? (
                 slide.shapes.map((shape, pos) => {
                   const isImage = shape.shape_type === 'image'
-                  const isSelected = !isImage && selectedIndices.includes(shape.index)
+                  const isSelected = !isImage && !isManual && selectedIndices.includes(shape.index)
                   const isEditing = !isImage && editing?.index === shape.index
                   const justify =
                     shape.vertical_anchor === 'middle' ? 'center'
@@ -352,6 +555,8 @@ export default function DocumentPreview({
                   return (
                     <div
                       key={`${shape.index}-${pos}`}
+                      contentEditable={isManual && isEditing ? true : undefined}
+                      suppressContentEditableWarning={isManual && isEditing}
                       style={{
                         position: 'absolute',
                         left: shape.left / 12700,
@@ -361,7 +566,7 @@ export default function DocumentPreview({
                         boxSizing: 'border-box',
                         ...(isImage ? {} : {
                           padding: '4px 8px',
-                          cursor: 'pointer',
+                          cursor: isManual ? 'text' : 'pointer',
                           display: 'flex',
                           flexDirection: 'column',
                           justifyContent: justify,
@@ -379,6 +584,15 @@ export default function DocumentPreview({
                         }),
                       }}
                       onMouseDown={isImage ? undefined : () => {
+                        if (isManual) {
+                          // In manual mode: single click enters edit mode
+                          if (!isEditing) {
+                            setEditing({ index: shape.index, original: shape.text, text: shape.text })
+                            onSelectionChange([])
+                          }
+                          return
+                        }
+                        // AI mode: selection
                         if (isEditing) return
                         isDragging.current = true
                         anchorIdx.current = pos
@@ -389,17 +603,36 @@ export default function DocumentPreview({
                         )
                         onTableSelect?.(null)
                       }}
-                      onMouseEnter={isImage ? undefined : () => {
+                      onMouseEnter={isImage || isManual ? undefined : () => {
                         if (!isDragging.current || anchorIdx.current === null) return
                         onSelectionChange(
                           rangeOf(anchorIdx.current, pos).map((p) => slide.shapes[p].index),
                         )
                       }}
-                      onDoubleClick={isImage ? undefined : (e) => {
+                      onDoubleClick={isImage || isManual ? undefined : (e) => {
                         e.stopPropagation()
                         setEditing({ index: shape.index, original: shape.text, text: shape.text })
                         onSelectionChange([])
                       }}
+                      onBlur={isManual && isEditing ? (e) => {
+                        const newText = (e.currentTarget as HTMLElement).innerText.trim()
+                        const original = editing!.original.trim()
+                        setEditing(null)
+                        if (newText !== original) {
+                          onDirectEdit?.({
+                            scope: { type: 'shape', slide_index: currentSlide, shape_indices: [shape.index] },
+                            original,
+                            revised: newText,
+                          })
+                        }
+                      } : undefined}
+                      onKeyDown={isManual && isEditing ? (e) => {
+                        if (e.key === 'Escape') {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setEditing(null)  // cancel — React restores original text on re-render
+                        }
+                      } : undefined}
                     >
                       {isImage && shape.image_src ? (
                         <img
