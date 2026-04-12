@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Scoped prose styles for DOCX HTML — inline styles from the document take precedence */
+.docx-preview { font-family: 'Calibri', 'Arial', sans-serif; font-size: 11pt; color: #1f2937; line-height: 1.6; }
+.docx-preview h1 { font-size: 2em;   font-weight: 700; margin-top: 1.25em; margin-bottom: 0.5em; }
+.docx-preview h2 { font-size: 1.5em; font-weight: 700; margin-top: 1em;    margin-bottom: 0.4em; }
+.docx-preview h3 { font-size: 1.25em; font-weight: 600; margin-top: 0.9em; margin-bottom: 0.3em; }
+.docx-preview h4 { font-size: 1.1em; font-weight: 600; margin-top: 0.8em; margin-bottom: 0.3em; }
+.docx-preview h5,
+.docx-preview h6 { font-size: 1em;   font-weight: 600; margin-top: 0.7em; margin-bottom: 0.2em; }
+.docx-preview p  { margin-top: 0; margin-bottom: 0.6em; }
+.docx-preview ul { list-style-type: disc;    margin: 0.4em 0; }
+.docx-preview ol { list-style-type: decimal; margin: 0.4em 0; }
+.docx-preview li { margin-bottom: 0.2em; }
+.docx-preview strong { font-weight: 700; }
+.docx-preview em     { font-style: italic; }
+.docx-preview u      { text-decoration: underline; }
+.docx-preview s      { text-decoration: line-through; }
+.docx-preview a      { color: #2563eb; text-decoration: underline; }
+.docx-preview table  { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+.docx-preview td,
+.docx-preview th     { border: 1px solid #d1d5db; padding: 6px 12px; vertical-align: top; }
+
+/* Interactive paragraph targets injected by the backend */
+[data-para-index] {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background-color 0.1s;
+}
+[data-para-index]:hover {
+  background-color: #f3f4f6;
+}

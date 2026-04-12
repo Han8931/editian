@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.python-version
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+*.txt
+!requirements.txt
+
+# Build artifacts
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and caches
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Local sample files
+sample_report.docx
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

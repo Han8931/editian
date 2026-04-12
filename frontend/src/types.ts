@@ -1,0 +1,107 @@
+export interface LLMConfig {
+  provider: 'ollama' | 'openai' | 'compatible'
+  baseUrl?: string
+  apiKey?: string
+  model: string
+  timeout: number  // seconds
+}
+
+export interface Paragraph {
+  index: number
+  text: string
+  style: string
+}
+
+export interface TextRun {
+  text: string
+  bold?: boolean | null
+  italic?: boolean | null
+  underline?: boolean | null
+  size?: number | null       // points (= px in natural slide coordinate space)
+  color?: string | null      // '#RRGGBB'
+}
+
+export interface SlideParagraph {
+  text: string
+  align?: string             // 'left' | 'center' | 'right' | 'justify'
+  runs: TextRun[]
+}
+
+export interface Shape {
+  index: number
+  name: string
+  shape_type: 'text' | 'image'
+  text: string
+  left: number               // EMU
+  top: number                // EMU
+  width: number              // EMU
+  height: number             // EMU
+  paragraphs: SlideParagraph[]
+  fill_color?: string | null
+  ph_idx?: number | null     // 0 = title, 1 = body/subtitle
+  vertical_anchor?: string   // 'top' | 'middle' | 'bottom'
+  image_src?: string | null  // base64 data URL for image shapes
+}
+
+export interface Slide {
+  index: number
+  shapes: Shape[]
+  background?: string | null
+}
+
+export interface DocxStructure {
+  paragraphs: Paragraph[]
+  total: number
+}
+
+export interface PptxStructure {
+  slides: Slide[]
+  total: number
+  slide_width: number        // EMU
+  slide_height: number       // EMU
+}
+
+export interface UploadResponse {
+  file_id: string
+  file_type: 'docx' | 'pptx'
+  name: string
+  html?: string
+  structure: DocxStructure | PptxStructure
+  can_undo: boolean
+  can_redo: boolean
+}
+
+export interface Workspace {
+  id: string
+  name: string          // auto-set to filename on upload, editable by user
+  doc: UploadResponse | null
+  currentSlide: number
+  selectedIndices: number[]
+  selectedTable: number | null
+  parentId?: string     // set when this workspace was branched from another
+}
+
+export interface RevisionScope {
+  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table'
+  paragraph_indices?: number[]
+  slide_index?: number
+  shape_indices?: number[]
+  table_index?: number
+  row_index?: number
+  cell_index?: number
+}
+
+export interface Revision {
+  scope: RevisionScope
+  original: string
+  revised: string
+  font_name?: string | null
+  font_size?: number | null
+  bold?: boolean | null
+  italic?: boolean | null
+  underline?: boolean | null
+}
+
+export interface ReviseResponse {
+  revisions: Revision[]
+}
