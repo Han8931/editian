@@ -195,11 +195,17 @@ export default function DocumentPreview({
 
     if (isCancelled) {
       el.innerText = original
+      // Sync displayHtml so the preview reflects the last saved state
+      setDisplayHtml(doc.html ?? '')
       return
     }
 
     const revised = el.innerText.trim()
-    if (revised === original.trim()) return  // already saved by auto-save
+    if (revised === original.trim()) {
+      // Already saved by auto-save — sync displayHtml to the updated doc
+      setDisplayHtml(doc.html ?? '')
+      return
+    }
 
     onDirectEdit?.({
       scope: { type: 'paragraphs', paragraph_indices: [index] },

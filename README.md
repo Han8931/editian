@@ -116,5 +116,7 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - Editing tools
 - Page info
 - Project directory
+- Manual mode: Save / Save button doesn't work
+- Move redo/undo
 
 
