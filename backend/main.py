@@ -2,10 +2,12 @@ import uuid
 import json
 import shutil
 from pathlib import Path
+import os
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import Optional
 
@@ -14,6 +16,7 @@ from parsers.pptx_parser import parse_pptx
 from writers.docx_writer import apply_docx_revisions
 from writers.pptx_writer import apply_pptx_revisions
 from llm import run_agent_loop
+from storage import S3DocumentStorage, StorageConfigError
 
 app = FastAPI(title="Editian")
 
@@ -28,6 +31,13 @@ app.add_middleware(
 FILES_DIR = Path.home() / ".editian" / "files"
 FILES_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_FILE = FILES_DIR.parent / "registry.json"
+
+load_dotenv(Path(__file__).with_name(".env"))
+_storage_backend = os.getenv("STORAGE_BACKEND", "local").strip().lower()
+try:
+    _storage: S3DocumentStorage | StorageConfigError = S3DocumentStorage.from_env()
+except StorageConfigError as exc:
+    _storage = exc
 
 # In-memory file registry {file_id: {path, type, name}}
 _files: dict = {}
@@ -51,8 +61,12 @@ def _load_registry() -> None:
     try:
         data = json.loads(REGISTRY_FILE.read_text())
         for fid, info in data.get("files", {}).items():
-            if Path(info["path"]).exists():
-                _files[fid] = info
+            if "path" not in info:
+                continue
+            if _storage_backend == "s3" and "s3_key" not in info:
+                if not isinstance(_storage, StorageConfigError):
+                    info["s3_key"] = _storage.build_key(fid, info["name"])
+            _files[fid] = info
         for fid, stack in data.get("undo_stacks", {}).items():
             valid = [p for p in stack if Path(p).exists()]
             if valid:
@@ -70,12 +84,47 @@ _load_registry()
 
 def _push_snapshot(file_id: str) -> None:
     """Copy the current file onto the undo stack and clear the redo stack."""
-    path = _files[file_id]["path"]
+    path = _ensure_local_file(file_id)
     snap = str(FILES_DIR / f"{file_id}.snap.{uuid.uuid4().hex[:8]}")
     shutil.copy2(path, snap)
     _undo_stacks.setdefault(file_id, []).append(snap)
     for p in _redo_stacks.pop(file_id, []):
         Path(p).unlink(missing_ok=True)
+
+
+def _require_storage() -> S3DocumentStorage:
+    if _storage_backend != "s3":
+        raise HTTPException(500, f"Storage backend '{_storage_backend}' does not use S3.")
+    if isinstance(_storage, StorageConfigError):
+        exc = _storage
+        raise HTTPException(500, f"S3 is not configured: {exc}") from exc
+    return _storage
+
+
+def _ensure_local_file(file_id: str) -> str:
+    info = _get_file(file_id)
+    path = Path(info["path"])
+    if not path.exists():
+        if _storage_backend != "s3":
+            raise HTTPException(500, "Local file is missing.")
+        storage = _require_storage()
+        s3_key = info.get("s3_key")
+        if not s3_key:
+            raise HTTPException(500, "File is missing an S3 key.")
+        storage.download_file(s3_key, path)
+    return str(path)
+
+
+def _sync_file_to_remote(file_id: str) -> None:
+    if _storage_backend != "s3":
+        return
+    info = _get_file(file_id)
+    storage = _require_storage()
+    local_path = _ensure_local_file(file_id)
+    s3_key = info.get("s3_key")
+    if not s3_key:
+        raise HTTPException(500, "File is missing an S3 key.")
+    storage.upload_file(local_path, s3_key)
 
 
 # ---------- Models ----------
@@ -141,8 +190,16 @@ async def upload_file(file: UploadFile = File(...)):
     file_id = str(uuid.uuid4())
     file_path = FILES_DIR / f"{file_id}{ext}"
     file_path.write_bytes(await file.read())
+    file_info = {"path": str(file_path), "type": ext[1:], "name": file.filename}
+    if _storage_backend == "s3":
+        storage = _require_storage()
+        s3_key = storage.build_key(file_id, file.filename)
+        storage.upload_file(file_path, s3_key)
+        file_path.unlink(missing_ok=True)
+        storage.download_file(s3_key, file_path)
+        file_info["s3_key"] = s3_key
 
-    _files[file_id] = {"path": str(file_path), "type": ext[1:], "name": file.filename}
+    _files[file_id] = file_info
     _save_registry()
     return _build_response(file_id)
 
@@ -151,7 +208,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def revise(req: ReviseRequest):
     info = _get_file(req.file_id)
     file_type = info["type"]
-    file_path = info["path"]
+    file_path = _ensure_local_file(req.file_id)
     llm = req.llm
     try:
         return await _do_revise(req, file_type, file_path, llm)
@@ -472,7 +529,7 @@ async def _do_revise(req, file_type, file_path, llm):
 async def apply(req: ApplyRequest):
     info = _get_file(req.file_id)
     file_type = info["type"]
-    file_path = info["path"]
+    file_path = _ensure_local_file(req.file_id)
     rev_dicts = [r.model_dump() for r in req.revisions]
 
     _push_snapshot(req.file_id)
@@ -482,6 +539,7 @@ async def apply(req: ApplyRequest):
     else:
         apply_pptx_revisions(file_path, file_path, rev_dicts)
 
+    _sync_file_to_remote(req.file_id)
     _save_registry()
     return _build_response(req.file_id)
 
@@ -489,6 +547,7 @@ async def apply(req: ApplyRequest):
 @app.post("/api/undo/{file_id}")
 async def undo(file_id: str):
     info = _get_file(file_id)
+    _ensure_local_file(file_id)
     stack = _undo_stacks.get(file_id, [])
     if not stack:
         raise HTTPException(400, "Nothing to undo.")
@@ -500,6 +559,7 @@ async def undo(file_id: str):
     snap = stack.pop()
     shutil.copy2(snap, info["path"])
     Path(snap).unlink(missing_ok=True)
+    _sync_file_to_remote(file_id)
     _save_registry()
     return _build_response(file_id)
 
@@ -507,6 +567,7 @@ async def undo(file_id: str):
 @app.post("/api/redo/{file_id}")
 async def redo(file_id: str):
     info = _get_file(file_id)
+    _ensure_local_file(file_id)
     stack = _redo_stacks.get(file_id, [])
     if not stack:
         raise HTTPException(400, "Nothing to redo.")
@@ -518,6 +579,7 @@ async def redo(file_id: str):
     snap = stack.pop()
     shutil.copy2(snap, info["path"])
     Path(snap).unlink(missing_ok=True)
+    _sync_file_to_remote(file_id)
     _save_registry()
     return _build_response(file_id)
 
@@ -525,8 +587,9 @@ async def redo(file_id: str):
 @app.get("/api/download/{file_id}")
 async def download(file_id: str):
     info = _get_file(file_id)
+    _sync_file_to_remote(file_id)
     return FileResponse(
-        info["path"],
+        _ensure_local_file(file_id),
         filename=f"revised_{info['name']}",
         media_type="application/octet-stream",
     )
@@ -543,8 +606,14 @@ async def branch_file(file_id: str):
     info = _get_file(file_id)
     new_id   = str(uuid.uuid4())
     new_path = FILES_DIR / f"{new_id}{Path(info['path']).suffix}"
-    shutil.copy2(info["path"], new_path)
-    _files[new_id] = {"path": str(new_path), "type": info["type"], "name": info["name"]}
+    shutil.copy2(_ensure_local_file(file_id), new_path)
+    file_info = {"path": str(new_path), "type": info["type"], "name": info["name"]}
+    if _storage_backend == "s3":
+        storage = _require_storage()
+        s3_key = storage.build_key(new_id, info["name"])
+        storage.upload_file(new_path, s3_key)
+        file_info["s3_key"] = s3_key
+    _files[new_id] = file_info
     _save_registry()
     return _build_response(new_id)
 
@@ -552,7 +621,11 @@ async def branch_file(file_id: str):
 @app.delete("/api/files/{file_id}")
 async def delete_file(file_id: str):
     if file_id in _files:
-        Path(_files[file_id]["path"]).unlink(missing_ok=True)
+        info = _files[file_id]
+        Path(info["path"]).unlink(missing_ok=True)
+        s3_key = info.get("s3_key")
+        if _storage_backend == "s3" and s3_key and not isinstance(_storage, StorageConfigError):
+            _storage.delete_file(s3_key)
         del _files[file_id]
     for p in _undo_stacks.pop(file_id, []):
         Path(p).unlink(missing_ok=True)
@@ -567,7 +640,7 @@ async def delete_file(file_id: str):
 def _build_response(file_id: str) -> dict:
     info = _files[file_id]
     file_type = info["type"]
-    file_path = info["path"]
+    file_path = _ensure_local_file(file_id)
 
     base = {
         "file_id": file_id,

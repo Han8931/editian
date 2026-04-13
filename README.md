@@ -8,6 +8,7 @@ A web tool for editing and polishing Word and PowerPoint documents using LLMs. U
 - **PPTX support** — slide-by-slide navigation, edit individual slides
 - **Diff preview** — see before/after for every revision before applying
 - **Flexible LLM backend** — works with Ollama (local), OpenAI, or any OpenAI-compatible API
+- **Configurable file storage** — keep files on local disk or synchronize them through S3
 - **Non-destructive** — changes apply only on Accept; download the revised file when done
 
 ## Project Structure
@@ -17,6 +18,7 @@ editian/
 ├── backend/               # Python + FastAPI
 │   ├── main.py            # API routes: upload, revise, apply, download
 │   ├── llm.py             # LLM client abstraction (Ollama / OpenAI / compatible)
+│   ├── storage.py         # S3 storage helper for upload/download sync
 │   ├── parsers/
 │   │   ├── docx_parser.py # python-docx + mammoth → HTML
 │   │   └── pptx_parser.py # python-pptx → slide structure
@@ -65,6 +67,63 @@ uvicorn main:app --reload
 
 Runs on `http://localhost:8000`.
 
+Create `backend/.env` from `backend/.env.example`:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Storage mode is controlled by `STORAGE_BACKEND`.
+
+Local storage:
+
+```bash
+STORAGE_BACKEND=local
+```
+
+In this mode, uploaded and processed files stay under `~/.editian/files`.
+
+S3 storage:
+
+```bash
+STORAGE_BACKEND=s3
+```
+
+Required S3 variables when `STORAGE_BACKEND=s3`:
+
+```bash
+S3_BUCKET=your-bucket-name
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+Optional variables:
+
+```bash
+S3_PREFIX=editian
+S3_ENDPOINT_URL=
+```
+
+S3 flow:
+
+1. User upload is written to a local temp file
+2. The file is uploaded to S3
+3. The backend downloads that S3 object back to the local working copy for parsing/editing
+4. Any processed output is uploaded back to S3 before download/undo/redo responses are finalized
+5. The final browser download is served from the latest local copy after syncing it to S3
+
+Example `backend/.env` for S3:
+
+```bash
+STORAGE_BACKEND=s3
+S3_BUCKET=my-editian-bucket
+S3_PREFIX=editian
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
 > Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### Frontend
@@ -111,12 +170,10 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - Support other languages
 - Layout change
 - Revising animation...
-- Editing mode / AI Mode
 - Close button remove
-- Editing tools
+- Editing tools 
+    - Align
 - Page info
 - Project directory
-- Manual mode: Save / Save button doesn't work
 - Move redo/undo
-
-
+- Logging
