@@ -6,6 +6,7 @@ import ModePanel from './components/ModePanel'
 import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
 import type { UploadResponse, Revision, Workspace } from './types'
+import editianLogo from '../../assets/editian_icon.svg'
 
 const SIDEBAR_MIN = 240
 const SIDEBAR_MAX = 600
@@ -321,7 +322,10 @@ export default function App() {
 
       {/* Top bar */}
       <header className="h-12 bg-white border-b border-gray-200 flex items-center px-5 gap-3 flex-shrink-0 shadow-sm z-10">
-        <span className="font-semibold text-gray-800 text-sm">Editian</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <img src={editianLogo} alt="Editian logo" className="h-6 w-6 flex-shrink-0" />
+          <span className="font-semibold text-gray-800 text-sm">Editian</span>
+        </div>
         {doc && (
           <>
             <span className="text-gray-300">|</span>
