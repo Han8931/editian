@@ -1,4 +1,4 @@
-import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse } from '../types'
+import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -84,6 +84,31 @@ export async function redoRevision(fileId: string): Promise<UploadResponse> {
 
 export function getDownloadUrl(fileId: string): string {
   return `${BASE_URL}/api/download/${fileId}`
+}
+
+export async function chatWithDocument(params: {
+  file_id: string
+  messages: ChatMessage[]
+  llm: LLMConfig
+}): Promise<string> {
+  const res = await fetch(`${BASE_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_id: params.file_id,
+      messages: params.messages,
+      llm: {
+        provider: params.llm.provider,
+        base_url: params.llm.baseUrl,
+        api_key: params.llm.apiKey,
+        model: params.llm.model,
+        timeout: params.llm.timeout,
+      },
+    }),
+  })
+  if (!res.ok) throw await apiError(res)
+  const data = await res.json()
+  return data.reply as string
 }
 
 export async function deleteFile(fileId: string): Promise<void> {

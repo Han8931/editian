@@ -84,3 +84,32 @@ def run_agent_loop(
         )
 
     return all_calls
+
+
+def run_chat(
+    system_prompt: str,
+    messages: list[dict],
+    provider: str,
+    model: str,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 120,
+) -> str:
+    """
+    Send a multi-turn conversation to the model and return the assistant's reply.
+    No tools — plain text response only.
+    """
+    client = get_client(provider, base_url, api_key)
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=full_messages,
+            timeout=timeout,
+        )
+        return response.choices[0].message.content or ""
+    except APITimeoutError:
+        raise TimeoutError(
+            f"The model took too long to respond (limit: {int(timeout)} s). "
+            "Try a lighter model, or increase the timeout in Settings."
+        )

@@ -15,7 +15,7 @@ from parsers.docx_parser import parse_docx, get_docx_html, get_cell_text, get_ta
 from parsers.pptx_parser import parse_pptx
 from writers.docx_writer import apply_docx_revisions
 from writers.pptx_writer import apply_pptx_revisions
-from llm import run_agent_loop
+from llm import run_agent_loop, run_chat
 from storage import S3DocumentStorage, StorageConfigError
 
 app = FastAPI(title="Editian")
@@ -644,6 +644,65 @@ async def delete_file(file_id: str):
         Path(p).unlink(missing_ok=True)
     _save_registry()
     return {"ok": True}
+
+
+class ChatMessage(BaseModel):
+    role: str   # 'user' | 'assistant'
+    content: str
+
+
+class ChatRequest(BaseModel):
+    file_id: str
+    messages: list[ChatMessage]
+    llm: LLMConfig
+
+
+_CHAT_SYSTEM_PROMPT = (
+    "You are a helpful assistant that answers questions about the document provided below. "
+    "Answer clearly and concisely. You may quote relevant passages when helpful. "
+    "Do not make up content that is not in the document."
+)
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    info = _get_file(req.file_id)
+    file_type = info["type"]
+    file_path = _ensure_local_file(req.file_id)
+
+    # Extract full document text as context
+    if file_type == "docx":
+        structure = parse_docx(file_path)
+        doc_text = "\n\n".join(
+            p["text"] for p in structure["paragraphs"] if p["text"].strip()
+        )
+    else:
+        structure = parse_pptx(file_path)
+        lines = []
+        for slide in structure["slides"]:
+            slide_texts = [sh["text"] for sh in slide["shapes"] if sh["text"].strip()]
+            if slide_texts:
+                lines.append(f"[Slide {slide['index'] + 1}]\n" + "\n".join(slide_texts))
+        doc_text = "\n\n".join(lines)
+
+    system_prompt = f"{_CHAT_SYSTEM_PROMPT}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    llm = req.llm
+    try:
+        reply = run_chat(
+            system_prompt,
+            messages,
+            llm.provider,
+            llm.model,
+            llm.base_url,
+            llm.api_key,
+            llm.timeout,
+        )
+    except TimeoutError as e:
+        raise HTTPException(408, str(e))
+
+    return {"reply": reply}
 
 
 # ---------- Internal ----------

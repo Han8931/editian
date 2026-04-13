@@ -111,3 +111,8 @@ export interface Revision {
 export interface ReviseResponse {
   revisions: Revision[]
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
