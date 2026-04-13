@@ -127,6 +127,17 @@ function captureFormatting(root: HTMLElement): CapturedFormatting {
   }
 }
 
+function applyBlockFontSize(root: HTMLElement, fontSize: number) {
+  const fontSizePt = `${fontSize}pt`
+  root.style.fontSize = fontSizePt
+
+  const descendants = Array.from(root.querySelectorAll<HTMLElement>('*'))
+  for (const el of descendants) {
+    if (!hasTextContent(el)) continue
+    el.style.fontSize = fontSizePt
+  }
+}
+
 function sameValue(a: string | number | boolean | null | undefined, b: string | number | boolean | null | undefined): boolean {
   return (a ?? null) === (b ?? null)
 }
@@ -407,13 +418,9 @@ export default function DocumentPreview({
   function ManualToolbar() {
     if (!isManual) return null
 
-    function activeEditableElement(): HTMLElement | null {
-      return manualEditRef.current?.el ?? manualShapeElementRef.current
-    }
-
     function fmt(cmd: string) {
       document.execCommand(cmd, false, undefined)
-      activeEditableElement()?.focus()
+      activeManualEditor()?.focus()
       setHasPendingEdit(true)
       if (isManual && doc.file_type === 'pptx' && manualShapeElementRef.current) {
         manualShapeDraftRef.current = manualShapeElementRef.current.innerText
@@ -421,9 +428,9 @@ export default function DocumentPreview({
     }
 
     function applyFontSize(fontSize: number) {
-      const el = activeEditableElement()
+      const el = activeManualEditor()
       if (!el) return
-      el.style.fontSize = `${fontSize}pt`
+      applyBlockFontSize(el, fontSize)
       el.focus()
       setHasPendingEdit(true)
       if (doc.file_type === 'pptx') {
@@ -432,19 +439,11 @@ export default function DocumentPreview({
     }
 
     function triggerUndo() {
-      if (hasPendingEdit && activeEditableElement()) {
-        document.execCommand('undo', false, undefined)
-        return
-      }
-      onUndo?.()
+      if (!triggerManualUndo()) onUndo?.()
     }
 
     function triggerRedo() {
-      if (hasPendingEdit && activeEditableElement()) {
-        document.execCommand('redo', false, undefined)
-        return
-      }
-      onRedo?.()
+      if (!triggerManualRedo()) onRedo?.()
     }
 
     const btnBase = 'w-8 h-8 flex items-center justify-center rounded transition-colors hover:bg-gray-100 text-gray-700 select-none'
@@ -497,7 +496,7 @@ export default function DocumentPreview({
         <div className="w-px h-5 bg-gray-200 mx-1" />
         <button
           onMouseDown={(e) => { e.preventDefault(); triggerUndo() }}
-          disabled={!hasPendingEdit && !canUndo}
+          disabled={!activeManualEditor() && !canUndo}
           title="Undo (⌘Z)"
           className={`${btnBase} disabled:opacity-30 disabled:cursor-not-allowed`}
         >
@@ -505,7 +504,7 @@ export default function DocumentPreview({
         </button>
         <button
           onMouseDown={(e) => { e.preventDefault(); triggerRedo() }}
-          disabled={!hasPendingEdit && !canRedo}
+          disabled={!activeManualEditor() && !canRedo}
           title="Redo (⌘⇧Z)"
           className={`${btnBase} disabled:opacity-30 disabled:cursor-not-allowed`}
         >
@@ -534,6 +533,32 @@ export default function DocumentPreview({
     isDragging.current = false
   }
 
+  function activeManualEditor(): HTMLElement | null {
+    return manualEditRef.current?.el ?? manualShapeElementRef.current
+  }
+
+  function isFocusedWithinManualEditor(): boolean {
+    const editor = activeManualEditor()
+    const activeEl = document.activeElement
+    return !!editor && !!activeEl && (activeEl === editor || editor.contains(activeEl))
+  }
+
+  function triggerManualUndo() {
+    if (activeManualEditor() && isFocusedWithinManualEditor()) {
+      document.execCommand('undo', false, undefined)
+      return true
+    }
+    return false
+  }
+
+  function triggerManualRedo() {
+    if (activeManualEditor() && isFocusedWithinManualEditor()) {
+      document.execCommand('redo', false, undefined)
+      return true
+    }
+    return false
+  }
+
   function handleManualHistoryShortcut(e: React.KeyboardEvent<HTMLElement>) {
     if (!(e.metaKey || e.ctrlKey)) return
     const key = e.key.toLowerCase()
@@ -541,12 +566,13 @@ export default function DocumentPreview({
     const isUndo = key === 'z' && !e.shiftKey
     if (!isUndo && !isRedo) return
 
-    if (hasPendingEdit) return
-
     e.preventDefault()
     e.stopPropagation()
-    if (isRedo) onRedo?.()
-    else onUndo?.()
+    if (isRedo) {
+      if (!triggerManualRedo()) onRedo?.()
+    } else {
+      if (!triggerManualUndo()) onUndo?.()
+    }
   }
 
   function saveEdit() {
