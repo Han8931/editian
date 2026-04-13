@@ -170,7 +170,6 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - Support other languages
 - Layout change
 - Close button remove
-- Project directory
 - Logging
 - Manual mode table issue
 - PPTX display issue

@@ -76,6 +76,11 @@ export interface UploadResponse {
   can_redo: boolean
 }
 
+export interface Directory {
+  id: string
+  name: string
+}
+
 export interface Workspace {
   id: string
   name: string          // auto-set to filename on upload, editable by user
@@ -84,6 +89,7 @@ export interface Workspace {
   selectedIndices: number[]
   selectedTable: number | null
   parentId?: string     // set when this workspace was branched from another
+  directoryId?: string  // set when placed inside a directory
 }
 
 export interface RevisionScope {

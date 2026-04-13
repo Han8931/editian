@@ -5,7 +5,7 @@ import Sidebar from './components/Sidebar'
 import ModePanel from './components/ModePanel'
 import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
-import type { UploadResponse, Revision, Workspace } from './types'
+import type { UploadResponse, Revision, Workspace, Directory } from './types'
 import editianLogo from '../../assets/editian_icon.svg'
 
 const SIDEBAR_MIN = 240
@@ -16,13 +16,14 @@ const WORKSPACE_MIN = 160
 const WORKSPACE_MAX = 380
 const WORKSPACE_DEFAULT = 208
 
-const LS_WORKSPACES = 'editian_workspaces'
-const LS_ACTIVE     = 'editian_active_workspace'
-const LS_WS_WIDTH   = 'editian_workspace_width'
-const LS_MODE       = 'editian_mode'
+const LS_WORKSPACES  = 'editian_workspaces'
+const LS_DIRECTORIES = 'editian_directories'
+const LS_ACTIVE      = 'editian_active_workspace'
+const LS_WS_WIDTH    = 'editian_workspace_width'
+const LS_MODE        = 'editian_mode'
 
 // Stored shape: minimal — no doc (too large for localStorage)
-interface StoredWorkspace { id: string; name: string; fileId: string | null; parentId?: string }
+interface StoredWorkspace { id: string; name: string; fileId: string | null; parentId?: string; directoryId?: string }
 
 function makeId(): string {
   if (globalThis.crypto?.randomUUID) {
@@ -58,7 +59,11 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => {
     const stored = loadStoredWorkspaces()
     if (stored.length === 0) return [newWorkspace()]
-    return stored.map((s) => ({ id: s.id, name: s.name, doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null, parentId: s.parentId }))
+    return stored.map((s) => ({ id: s.id, name: s.name, doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null, parentId: s.parentId, directoryId: s.directoryId }))
+  })
+
+  const [directories, setDirectories] = useState<Directory[]>(() => {
+    try { return JSON.parse(localStorage.getItem(LS_DIRECTORIES) ?? '[]') } catch { return [] }
   })
 
   const [activeId, setActiveId] = useState<string>(() => {
@@ -83,9 +88,14 @@ export default function App() {
 
   // Persist workspace list whenever it changes
   useEffect(() => {
-    const toStore: StoredWorkspace[] = workspaces.map((w) => ({ id: w.id, name: w.name, fileId: w.doc?.file_id ?? null, parentId: w.parentId }))
+    const toStore: StoredWorkspace[] = workspaces.map((w) => ({ id: w.id, name: w.name, fileId: w.doc?.file_id ?? null, parentId: w.parentId, directoryId: w.directoryId }))
     localStorage.setItem(LS_WORKSPACES, JSON.stringify(toStore))
   }, [workspaces])
+
+  // Persist directories
+  useEffect(() => {
+    localStorage.setItem(LS_DIRECTORIES, JSON.stringify(directories))
+  }, [directories])
 
   // Persist active workspace id
   useEffect(() => {
@@ -183,6 +193,25 @@ export default function App() {
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Branch failed.')
     }
+  }
+
+  // ── Directory management ───────────────────────────────────────────────
+
+  function handleCreateDirectory() {
+    setDirectories((prev) => [...prev, { id: makeId(), name: 'New folder' }])
+  }
+
+  function handleDeleteDirectory(id: string) {
+    setWorkspaces((prev) => prev.map((w) => w.directoryId === id ? { ...w, directoryId: undefined } : w))
+    setDirectories((prev) => prev.filter((d) => d.id !== id))
+  }
+
+  function handleRenameDirectory(id: string, name: string) {
+    setDirectories((prev) => prev.map((d) => d.id === id ? { ...d, name } : d))
+  }
+
+  function handleMoveWorkspace(workspaceId: string, directoryId: string | null) {
+    setWorkspaces((prev) => prev.map((w) => w.id === workspaceId ? { ...w, directoryId: directoryId ?? undefined } : w))
   }
 
   // ── Document handlers ──────────────────────────────────────────────────
@@ -462,12 +491,17 @@ export default function App() {
         {/* Workspace panel */}
         <WorkspacePanel
           workspaces={workspaces}
+          directories={directories}
           activeId={activeId}
           onSelect={handleSwitchWorkspace}
           onCreate={handleCreateWorkspace}
           onDelete={handleDeleteWorkspace}
           onRename={handleRenameWorkspace}
           onBranch={handleBranchWorkspace}
+          onCreateDirectory={handleCreateDirectory}
+          onDeleteDirectory={handleDeleteDirectory}
+          onRenameDirectory={handleRenameDirectory}
+          onMoveWorkspace={handleMoveWorkspace}
           style={{ width: workspaceWidth, minWidth: workspaceWidth }}
         />
 
