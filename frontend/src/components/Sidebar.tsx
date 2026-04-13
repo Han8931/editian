@@ -126,6 +126,8 @@ export default function Sidebar({
   async function handleChat() {
     const text = chatInput.trim()
     if (!text) return
+    const scope = buildScope()
+    const hasSelection = scope.type !== 'document'
     const userMsg: ChatMessage = { role: 'user', content: text }
     const nextMessages = [...chatMessages, userMsg]
     setChatMessages(nextMessages)
@@ -133,11 +135,15 @@ export default function Sidebar({
     setChatLoading(true)
     setChatError(null)
     try {
-      const reply = await chatWithDocument({ file_id: doc.file_id, messages: nextMessages, llm })
+      const reply = await chatWithDocument({
+        file_id: doc.file_id,
+        messages: nextMessages,
+        llm,
+        scope: hasSelection ? scope : undefined,
+      })
       setChatMessages([...nextMessages, { role: 'assistant', content: reply }])
     } catch (e) {
       setChatError(e instanceof Error ? e.message : 'Chat failed.')
-      // Remove the optimistic user message on failure
       setChatMessages(chatMessages)
     } finally {
       setChatLoading(false)
@@ -380,6 +386,14 @@ export default function Sidebar({
 
             <div ref={chatBottomRef} />
           </div>
+
+          {/* Selection context indicator */}
+          {selectionLabel && (
+            <div className="flex-shrink-0 flex items-center gap-2 border-t border-gray-200 px-3 py-2 bg-blue-50">
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
+              <span className="text-xs font-medium text-blue-700 truncate">{selectionLabel} — asking about selection</span>
+            </div>
+          )}
 
           {/* Input bar */}
           <div className="flex-shrink-0 border-t border-gray-200 p-3 flex gap-2 items-end">

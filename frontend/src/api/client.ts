@@ -90,6 +90,7 @@ export async function chatWithDocument(params: {
   file_id: string
   messages: ChatMessage[]
   llm: LLMConfig
+  scope?: RevisionScope
 }): Promise<string> {
   const res = await fetch(`${BASE_URL}/api/chat`, {
     method: 'POST',
@@ -97,6 +98,7 @@ export async function chatWithDocument(params: {
     body: JSON.stringify({
       file_id: params.file_id,
       messages: params.messages,
+      scope: params.scope ?? null,
       llm: {
         provider: params.llm.provider,
         base_url: params.llm.baseUrl,

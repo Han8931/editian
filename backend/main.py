@@ -655,6 +655,7 @@ class ChatRequest(BaseModel):
     file_id: str
     messages: list[ChatMessage]
     llm: LLMConfig
+    scope: Optional[RevisionScope] = None
 
 
 _CHAT_SYSTEM_PROMPT = (
@@ -662,6 +663,40 @@ _CHAT_SYSTEM_PROMPT = (
     "Answer clearly and concisely. You may quote relevant passages when helpful. "
     "Do not make up content that is not in the document."
 )
+
+
+def _extract_selected_text(file_type: str, file_path: str, scope: RevisionScope) -> Optional[str]:
+    """Return the plain text of the selection, or None if the scope covers the whole document."""
+    if scope.type == "document":
+        return None
+
+    if file_type == "docx":
+        structure = parse_docx(file_path)
+        paragraphs = structure["paragraphs"]
+        if scope.type == "paragraphs" and scope.paragraph_indices:
+            idx_set = set(scope.paragraph_indices)
+            lines = [p["text"] for p in paragraphs if p["index"] in idx_set and p["text"].strip()]
+            return "\n\n".join(lines) or None
+        if scope.type in ("table_cell", "table"):
+            table_index = scope.table_index or 0
+            if scope.type == "table_cell":
+                return get_cell_text(file_path, table_index, scope.row_index or 0, scope.cell_index or 0) or None
+            cells = get_table_cells(file_path, table_index)
+            return "\n".join(c["text"] for c in cells if c["text"].strip()) or None
+
+    elif file_type == "pptx":
+        structure = parse_pptx(file_path)
+        slides = structure["slides"]
+        slide_idx = scope.slide_index
+        slide = next((s for s in slides if s["index"] == slide_idx), None)
+        if not slide:
+            return None
+        if scope.type == "shape" and scope.shape_indices:
+            idx_set = set(scope.shape_indices)
+            lines = [sh["text"] for sh in slide["shapes"] if sh["index"] in idx_set and sh["text"].strip()]
+            return "\n\n".join(lines) or None
+
+    return None
 
 
 @app.post("/api/chat")
@@ -685,7 +720,17 @@ async def chat(req: ChatRequest):
                 lines.append(f"[Slide {slide['index'] + 1}]\n" + "\n".join(slide_texts))
         doc_text = "\n\n".join(lines)
 
+    # Build system prompt — append selected passage when a scope is provided
     system_prompt = f"{_CHAT_SYSTEM_PROMPT}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
+    if req.scope:
+        selected_text = _extract_selected_text(file_type, file_path, req.scope)
+        if selected_text:
+            system_prompt += (
+                "\n\nThe user has selected the following passage from the document. "
+                "Focus your answer on this passage unless the question clearly refers to something else:\n"
+                f"\"\"\"\n{selected_text}\n\"\"\""
+            )
+
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
 
     llm = req.llm
