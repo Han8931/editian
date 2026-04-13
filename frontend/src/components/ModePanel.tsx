@@ -63,7 +63,6 @@ export default function ModePanel({ doc, style }: Props) {
           <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Notes</div>
           <div className="space-y-2 text-sm text-gray-500">
             <p>Block-level formatting (bold, italic, underline, font size) is preserved when the edited block uses one consistent style.</p>
-            {!isPptx && <p>Table cells are not editable in manual mode — switch to AI mode for table edits.</p>}
             <p>Use <span className="font-medium text-gray-700">AI mode</span> for instruction-based revisions and batch edits.</p>
           </div>
         </div>

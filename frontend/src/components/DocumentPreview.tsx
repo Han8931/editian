@@ -46,6 +46,7 @@ type ManualEditRef = {
   original: string
   originalFormatting: CapturedFormatting
   isCancelled: boolean
+  cellRef?: CellRef
 } | null
 
 type CapturedFormatting = Pick<Revision, 'font_name' | 'font_size' | 'align' | 'bold' | 'italic' | 'underline' | 'strike'>
@@ -293,7 +294,9 @@ export default function DocumentPreview({
     setHasPendingEdit(false)
 
     onDirectEdit?.({
-      scope: { type: 'paragraphs', paragraph_indices: [ref.index] },
+      scope: ref.cellRef
+        ? { type: 'table_cell', table_index: ref.cellRef.t, row_index: ref.cellRef.r, cell_index: ref.cellRef.c }
+        : { type: 'paragraphs', paragraph_indices: [ref.index] },
       original,
       revised,
       ...formatting,
@@ -312,7 +315,7 @@ export default function DocumentPreview({
     if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null }
   }
 
-  function startDocxEdit(el: HTMLElement, paraIdx: number, clientX: number, clientY: number) {
+  function startDocxEdit(el: HTMLElement, paraIdx: number, clientX: number, clientY: number, cellRef?: CellRef) {
     // Already editing this exact element — let browser handle cursor natively
     if (manualEditRef.current?.el === el) return
     // Commit any other element currently being edited
@@ -325,6 +328,7 @@ export default function DocumentPreview({
       original,
       originalFormatting: captureFormatting(el),
       isCancelled: false,
+      cellRef,
     }
     setManualEditorActive(true)
 
@@ -378,7 +382,9 @@ export default function DocumentPreview({
     }
 
     onDirectEdit?.({
-      scope: { type: 'paragraphs', paragraph_indices: [index] },
+      scope: ref.cellRef
+        ? { type: 'table_cell', table_index: ref.cellRef.t, row_index: ref.cellRef.r, cell_index: ref.cellRef.c }
+        : { type: 'paragraphs', paragraph_indices: [index] },
       original: original.trim(),
       revised,
       ...formatting,
@@ -922,8 +928,8 @@ export default function DocumentPreview({
           : `[data-para-index="${editing.index}"] { outline: 2px solid #3b82f6 !important; border-radius: 3px; }`
         : ''
 
-    // In manual mode paragraphs should show a text cursor, not a pointer
-    const manualCursorCSS = isManual ? '[data-para-index] { cursor: text; }' : ''
+    // In manual mode paragraphs and cells should show a text cursor, not a pointer
+    const manualCursorCSS = isManual ? '[data-para-index], [data-cell-ref] { cursor: text; }' : ''
 
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
@@ -935,8 +941,13 @@ export default function DocumentPreview({
             className={`h-full overflow-auto p-8 ${isManual ? '' : 'select-none'}`}
             onMouseDown={(e) => {
               if (isManual) {
-                // Skip table cells — not supported in manual mode v1
-                if ((e.target as Element).closest('[data-cell-ref]')) return
+                // Table cell click
+                const cellEl = (e.target as Element).closest('[data-cell-ref]') as HTMLElement | null
+                if (cellEl) {
+                  const m = cellEl.getAttribute('data-cell-ref')?.match(/t(\d+)r(\d+)c(\d+)/)
+                  if (m) startDocxEdit(cellEl, -1, e.clientX, e.clientY, { t: +m[1], r: +m[2], c: +m[3] })
+                  return
+                }
                 const el = (e.target as Element).closest('[data-para-index]') as HTMLElement | null
                 if (!el) {
                   // Clicked outside any paragraph — commit current edit
