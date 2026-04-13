@@ -87,6 +87,8 @@ export default function DocumentPreview({
   const [editing, setEditing] = useState<EditingState>(null)
   const editTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [zoom, setZoom] = useState(100)
+  const manualShapeElementRef = useRef<HTMLElement | null>(null)
+  const manualShapeDraftRef = useRef<string | null>(null)
 
   // ── Manual mode state ────────────────────────────────────────────────────
   // Tracks the currently-edited DOM element for inline DOCX editing
@@ -381,7 +383,14 @@ export default function DocumentPreview({
 
   function saveEdit() {
     if (!editing) return
-    if (editing.text !== editing.original) {
+    const revisedText = (
+      isManual && doc.file_type === 'pptx' && !editing.cellRef
+        ? manualShapeElementRef.current?.innerText ?? manualShapeDraftRef.current ?? editing.text
+        : editing.text
+    ).trim()
+    const originalText = editing.original.trim()
+
+    if (revisedText !== originalText) {
       let scope: Revision['scope']
       if (editing.cellRef) {
         scope = {
@@ -395,12 +404,18 @@ export default function DocumentPreview({
       } else {
         scope = { type: 'shape', slide_index: currentSlide, shape_indices: [editing.index] }
       }
-      onDirectEdit?.({ scope, original: editing.original, revised: editing.text })
+      onDirectEdit?.({ scope, original: originalText, revised: revisedText })
     }
+    manualShapeElementRef.current = null
+    manualShapeDraftRef.current = null
+    setHasPendingEdit(false)
     setEditing(null)
   }
 
   function cancelEdit() {
+    manualShapeElementRef.current = null
+    manualShapeDraftRef.current = null
+    setHasPendingEdit(false)
     setEditing(null)
   }
 
@@ -642,6 +657,8 @@ export default function DocumentPreview({
                         if (isManual) {
                           // In manual mode: single click enters edit mode
                           if (!isEditing) {
+                            manualShapeDraftRef.current = shape.text
+                            setHasPendingEdit(false)
                             setEditing({ index: shape.index, original: shape.text, text: shape.text })
                             onSelectionChange([])
                           }
@@ -664,26 +681,25 @@ export default function DocumentPreview({
                         )
                       }}
                       onBlur={isManual && isEditing ? (e) => {
-                        const newText = (e.currentTarget as HTMLElement).innerText.trim()
-                        const original = editing!.original.trim()
-                        setEditing(null)
-                        if (newText !== original) {
-                          onDirectEdit?.({
-                            scope: { type: 'shape', slide_index: currentSlide, shape_indices: [shape.index] },
-                            original,
-                            revised: newText,
-                          })
-                        }
+                        manualShapeDraftRef.current = (e.currentTarget as HTMLElement).innerText
+                        saveEdit()
+                      } : undefined}
+                      onInput={isManual && isEditing ? (e) => {
+                        manualShapeDraftRef.current = (e.currentTarget as HTMLElement).innerText
+                        setHasPendingEdit(true)
                       } : undefined}
                       onKeyDown={isManual && isEditing ? (e) => {
                         if (e.key === 'Escape') {
                           e.preventDefault()
                           e.stopPropagation()
-                          setEditing(null)  // cancel — React restores original text on re-render
+                          cancelEdit()  // React restores the original text on re-render
                         } else if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
                           e.preventDefault()
                           saveEdit()
                         }
+                      } : undefined}
+                      ref={isManual && isEditing ? (el) => {
+                        manualShapeElementRef.current = el
                       } : undefined}
                     >
                       {isImage && shape.image_src ? (

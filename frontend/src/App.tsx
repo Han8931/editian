@@ -96,6 +96,7 @@ export default function App() {
   const containerRef        = useRef<HTMLDivElement>(null)
   const downloadInputRef    = useRef<HTMLInputElement>(null)
   const downloadAnchorRef   = useRef<HTMLAnchorElement>(null)
+  const directEditQueuesRef = useRef(new Map<string, Promise<void>>())
 
   // ── Derived ────────────────────────────────────────────────────────────
   const active = workspaces.find((w) => w.id === activeId) ?? workspaces[0]
@@ -179,13 +180,31 @@ export default function App() {
     const targetId = activeId
     const fileId   = doc.file_id
     setEditError(null)
+    const queueKey = `${targetId}:${fileId}`
+    const previous = directEditQueuesRef.current.get(queueKey) ?? Promise.resolve()
+    const next = previous
+      .catch(() => {})
+      .then(async () => {
+        const newDoc = await applyRevisions(fileId, [revision])
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === targetId && w.doc?.file_id === fileId
+              ? { ...w, doc: newDoc, selectedIndices: [] }
+              : w,
+          ),
+        )
+      })
+
+    directEditQueuesRef.current.set(queueKey, next)
+
     try {
-      const newDoc = await applyRevisions(fileId, [revision])
-      setWorkspaces((prev) =>
-        prev.map((w) => w.id === targetId ? { ...w, doc: newDoc, selectedIndices: [] } : w)
-      )
+      await next
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Edit failed.')
+    } finally {
+      if (directEditQueuesRef.current.get(queueKey) === next) {
+        directEditQueuesRef.current.delete(queueKey)
+      }
     }
   }
 
