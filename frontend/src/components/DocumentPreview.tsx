@@ -19,6 +19,7 @@ type EditingState = {
   index: number
   original: string
   text: string
+  originalFormatting?: CapturedFormatting
   cellRef?: { t: number; r: number; c: number }
 } | null
 
@@ -26,8 +27,11 @@ type ManualEditRef = {
   el: HTMLElement
   index: number
   original: string
+  originalFormatting: CapturedFormatting
   isCancelled: boolean
 } | null
+
+type CapturedFormatting = Pick<Revision, 'font_name' | 'font_size' | 'bold' | 'italic' | 'underline' | 'strike'>
 
 /** Returns the data-para-index of the element under the pointer, or null. */
 function paraIndexAt(x: number, y: number): number | null {
@@ -67,6 +71,69 @@ function placeCaret(clientX: number, clientY: number) {
   } catch {
     // Caret placement failed — cursor will be at beginning, acceptable fallback
   }
+}
+
+function pxToPt(value: string): number | null {
+  const px = Number.parseFloat(value)
+  if (!Number.isFinite(px) || px <= 0) return null
+  return Math.round((px * 72) / 96 * 10) / 10
+}
+
+function hasTextContent(el: Element): boolean {
+  return !!el.textContent?.replace(/\s+/g, '')
+}
+
+function commandStateFromElement(root: HTMLElement, selector: string, cssCheck: (style: CSSStyleDeclaration) => boolean): boolean | null {
+  const nodes = Array.from(root.querySelectorAll(selector)).filter(hasTextContent)
+  if (nodes.length > 0) return true
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let foundText = false
+  let allMatch = true
+  let node = walker.nextNode()
+  while (node) {
+    if (node.textContent?.trim()) {
+      foundText = true
+      const parent = (node.parentElement ?? root)
+      if (!cssCheck(window.getComputedStyle(parent))) {
+        allMatch = false
+        break
+      }
+    }
+    node = walker.nextNode()
+  }
+  return foundText ? allMatch : null
+}
+
+function captureFormatting(root: HTMLElement): CapturedFormatting {
+  const style = window.getComputedStyle(root)
+  const fontSize = pxToPt(style.fontSize)
+  const rawFontFamily = style.fontFamily
+    .split(',')
+    .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
+    .find(Boolean)
+
+  return {
+    font_name: rawFontFamily && rawFontFamily !== 'sans-serif' ? rawFontFamily : null,
+    font_size: fontSize,
+    bold: commandStateFromElement(root, 'strong,b', (s) => Number.parseInt(s.fontWeight, 10) >= 600 || s.fontWeight === 'bold'),
+    italic: commandStateFromElement(root, 'em,i', (s) => s.fontStyle === 'italic' || s.fontStyle === 'oblique'),
+    underline: commandStateFromElement(root, 'u', (s) => s.textDecorationLine.includes('underline')),
+    strike: commandStateFromElement(root, 's,strike', (s) => s.textDecorationLine.includes('line-through')),
+  }
+}
+
+function sameValue(a: string | number | boolean | null | undefined, b: string | number | boolean | null | undefined): boolean {
+  return (a ?? null) === (b ?? null)
+}
+
+function formattingChanged(a: CapturedFormatting | undefined, b: CapturedFormatting): boolean {
+  return !sameValue(a?.font_name, b.font_name)
+    || !sameValue(a?.font_size, b.font_size)
+    || !sameValue(a?.bold, b.bold)
+    || !sameValue(a?.italic, b.italic)
+    || !sameValue(a?.underline, b.underline)
+    || !sameValue(a?.strike, b.strike)
 }
 
 export default function DocumentPreview({
@@ -128,16 +195,19 @@ export default function DocumentPreview({
     if (!ref || ref.isCancelled) return
     const revised = ref.el.innerText.trim()
     const original = ref.original.trim()
-    if (revised === original) return
+    const formatting = captureFormatting(ref.el)
+    if (revised === original && !formattingChanged(ref.originalFormatting, formatting)) return
 
     // Advance the baseline so the next save compares from here, not the start
     ref.original = revised
+    ref.originalFormatting = formatting
     setHasPendingEdit(false)
 
     onDirectEdit?.({
       scope: { type: 'paragraphs', paragraph_indices: [ref.index] },
       original,
       revised,
+      ...formatting,
     })
   }
 
@@ -160,7 +230,13 @@ export default function DocumentPreview({
     if (manualEditRef.current) commitDocxEdit()
 
     const original = el.innerText
-    manualEditRef.current = { el, index: paraIdx, original, isCancelled: false }
+    manualEditRef.current = {
+      el,
+      index: paraIdx,
+      original,
+      originalFormatting: captureFormatting(el),
+      isCancelled: false,
+    }
 
     el.contentEditable = 'true'
     el.style.outline = '2px solid #3b82f6'
@@ -186,7 +262,7 @@ export default function DocumentPreview({
     manualEditRef.current = null
     setHasPendingEdit(false)
 
-    const { el, index, original, isCancelled } = ref
+    const { el, index, original, originalFormatting, isCancelled } = ref
     el.contentEditable = 'false'
     el.style.outline = ''
     el.style.borderRadius = ''
@@ -203,7 +279,8 @@ export default function DocumentPreview({
     }
 
     const revised = el.innerText.trim()
-    if (revised === original.trim()) {
+    const formatting = captureFormatting(el)
+    if (revised === original.trim() && !formattingChanged(originalFormatting, formatting)) {
       // Already saved by auto-save — sync displayHtml to the updated doc
       setDisplayHtml(doc.html ?? '')
       return
@@ -213,6 +290,7 @@ export default function DocumentPreview({
       scope: { type: 'paragraphs', paragraph_indices: [index] },
       original: original.trim(),
       revised,
+      ...formatting,
     })
   }
 
@@ -324,6 +402,11 @@ export default function DocumentPreview({
     function fmt(cmd: string) {
       document.execCommand(cmd, false, undefined)
       manualEditRef.current?.el.focus()
+      manualShapeElementRef.current?.focus()
+      setHasPendingEdit(true)
+      if (isManual && doc.file_type === 'pptx' && manualShapeElementRef.current) {
+        manualShapeDraftRef.current = manualShapeElementRef.current.innerText
+      }
     }
 
     const btnBase = 'w-8 h-8 flex items-center justify-center rounded transition-colors hover:bg-gray-100 text-gray-700 select-none'
@@ -389,8 +472,13 @@ export default function DocumentPreview({
         : editing.text
     ).trim()
     const originalText = editing.original.trim()
+    const formatting: CapturedFormatting = (
+      isManual && doc.file_type === 'pptx' && !editing.cellRef && manualShapeElementRef.current
+        ? captureFormatting(manualShapeElementRef.current)
+        : {}
+    )
 
-    if (revisedText !== originalText) {
+    if (revisedText !== originalText || formattingChanged(editing.originalFormatting, formatting)) {
       let scope: Revision['scope']
       if (editing.cellRef) {
         scope = {
@@ -404,7 +492,7 @@ export default function DocumentPreview({
       } else {
         scope = { type: 'shape', slide_index: currentSlide, shape_indices: [editing.index] }
       }
-      onDirectEdit?.({ scope, original: originalText, revised: revisedText })
+      onDirectEdit?.({ scope, original: originalText, revised: revisedText, ...formatting })
     }
     manualShapeElementRef.current = null
     manualShapeDraftRef.current = null
@@ -653,13 +741,18 @@ export default function DocumentPreview({
                           outlineOffset: 1,
                         }),
                       }}
-                      onMouseDown={isImage ? undefined : () => {
+                      onMouseDown={isImage ? undefined : (e) => {
                         if (isManual) {
                           // In manual mode: single click enters edit mode
                           if (!isEditing) {
                             manualShapeDraftRef.current = shape.text
                             setHasPendingEdit(false)
-                            setEditing({ index: shape.index, original: shape.text, text: shape.text })
+                            setEditing({
+                              index: shape.index,
+                              original: shape.text,
+                              text: shape.text,
+                              originalFormatting: captureFormatting(e.currentTarget as HTMLElement),
+                            })
                             onSelectionChange([])
                           }
                           return
@@ -725,11 +818,11 @@ export default function DocumentPreview({
                                 key={ri}
                                 style={{
                                   fontSize: run.size ?? (shape.ph_idx === 0 ? 36 : 20),
+                                  fontFamily: run.font_name ?? 'sans-serif',
                                   fontWeight: run.bold ? 'bold' : 'normal',
                                   fontStyle: run.italic ? 'italic' : 'normal',
-                                  textDecoration: run.underline ? 'underline' : undefined,
+                                  textDecoration: [run.underline ? 'underline' : '', run.strike ? 'line-through' : ''].filter(Boolean).join(' ') || undefined,
                                   color: run.color ?? '#1a1a1a',
-                                  fontFamily: 'sans-serif',
                                 }}
                               >
                                 {run.text}

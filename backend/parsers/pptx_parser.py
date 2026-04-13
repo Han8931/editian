@@ -103,13 +103,15 @@ def _text_dict(shape, idx: int) -> Optional[dict]:
                 "bold":      f.bold,
                 "italic":    f.italic,
                 "underline": f.underline,
+                "strike":    f.strike,
+                "font_name": f.name,
                 "size":      f.size.pt if f.size is not None else None,
                 "color":     _color_hex(f.color),
             })
 
         if not runs and para.text:
             runs = [{"text": para.text, "bold": None, "italic": None,
-                     "underline": None, "size": None, "color": None}]
+                     "underline": None, "strike": None, "font_name": None, "size": None, "color": None}]
 
         paragraphs.append({
             "text":  para.text,

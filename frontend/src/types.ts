@@ -17,6 +17,8 @@ export interface TextRun {
   bold?: boolean | null
   italic?: boolean | null
   underline?: boolean | null
+  strike?: boolean | null
+  font_name?: string | null
   size?: number | null       // points (= px in natural slide coordinate space)
   color?: string | null      // '#RRGGBB'
 }
@@ -100,6 +102,7 @@ export interface Revision {
   bold?: boolean | null
   italic?: boolean | null
   underline?: boolean | null
+  strike?: boolean | null
 }
 
 export interface ReviseResponse {

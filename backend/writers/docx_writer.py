@@ -23,18 +23,19 @@ def apply_docx_revisions(
         bold: bool | None      = revision.get("bold")
         italic: bool | None    = revision.get("italic")
         underline: bool | None = revision.get("underline")
+        strike: bool | None    = revision.get("strike")
 
         if scope["type"] == "document":
             revised_paras = revised_text.split("\n\n")
             non_empty = [p for p in doc.paragraphs if p.text.strip()]
             for i, para in enumerate(non_empty):
                 new_text = revised_paras[i] if i < len(revised_paras) else ""
-                _set_paragraph_text(para, new_text, font_name, font_size, bold, italic, underline)
+                _set_paragraph_text(para, new_text, font_name, font_size, bold, italic, underline, strike)
 
         elif scope["type"] == "paragraphs":
             for idx in (scope.get("paragraph_indices") or []):
                 if idx < len(doc.paragraphs):
-                    _set_paragraph_text(doc.paragraphs[idx], revised_text, font_name, font_size, bold, italic, underline)
+                    _set_paragraph_text(doc.paragraphs[idx], revised_text, font_name, font_size, bold, italic, underline, strike)
 
         elif scope["type"] == "table_cell":
             table_index = scope.get("table_index", 0)
@@ -47,13 +48,14 @@ def apply_docx_revisions(
                     if cell_index < len(row.cells):
                         cell = row.cells[cell_index]
                         if cell.paragraphs:
-                            _set_paragraph_text(cell.paragraphs[0], revised_text, font_name, font_size, bold, italic, underline)
+                            _set_paragraph_text(cell.paragraphs[0], revised_text, font_name, font_size, bold, italic, underline, strike)
 
     doc.save(output_path)
 
 
 def _set_paragraph_text(para: Any, text: str, font_name: str | None = None, font_size: float | None = None,
-                        bold: bool | None = None, italic: bool | None = None, underline: bool | None = None) -> None:
+                        bold: bool | None = None, italic: bool | None = None, underline: bool | None = None,
+                        strike: bool | None = None) -> None:
     if para.runs:
         para.runs[0].text = text
         for run in para.runs[1:]:
@@ -69,3 +71,5 @@ def _set_paragraph_text(para: Any, text: str, font_name: str | None = None, font
                 run.font.italic = italic
             if underline is not None:
                 run.font.underline = underline
+            if strike is not None:
+                run.font.strike = strike

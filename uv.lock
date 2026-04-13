@@ -67,7 +67,7 @@ wheels = [
 ]
 
 [[package]]
-name = "document-ai"
+name = "editian"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

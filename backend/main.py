@@ -114,6 +114,7 @@ class ApplyRevision(BaseModel):
     bold: Optional[bool] = None
     italic: Optional[bool] = None
     underline: Optional[bool] = None
+    strike: Optional[bool] = None
 
 
 class ApplyRequest(BaseModel):

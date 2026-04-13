@@ -59,7 +59,7 @@ export default function ModePanel({ doc, style }: Props) {
         <div className="rounded-xl border border-gray-200 px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-gray-500">Notes</div>
           <div className="mt-3 space-y-2 text-sm text-gray-500">
-            <p>Inline formatting (bold, italic, etc.) is visible while editing but only plain text is preserved on save.</p>
+            <p>Manual edits now preserve block-level font styling such as bold, italic, underline, strikethrough, font family, and size when the edited block uses one consistent style.</p>
             {!isPptx && <p>Table cells are not editable in manual mode — switch to AI mode for table edits.</p>}
             <p>Use <span className="font-medium text-gray-700">AI mode</span> for instruction-based revisions, formatting changes, and batch edits.</p>
           </div>

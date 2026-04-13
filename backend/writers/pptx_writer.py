@@ -23,6 +23,7 @@ def apply_pptx_revisions(
         bold: bool | None      = revision.get("bold")
         italic: bool | None    = revision.get("italic")
         underline: bool | None = revision.get("underline")
+        strike: bool | None    = revision.get("strike")
 
         if scope["type"] == "shape":
             slide_idx = scope.get("slide_index")
@@ -33,7 +34,7 @@ def apply_pptx_revisions(
                     if shape_idx < len(slide.shapes):
                         s = slide.shapes[shape_idx]
                         if s.has_text_frame:
-                            _set_shape_text(s, revised_text, font_name, font_size, bold, italic, underline)
+                            _set_shape_text(s, revised_text, font_name, font_size, bold, italic, underline, strike)
 
         elif scope["type"] == "slide":
             slide_idx = scope.get("slide_index")
@@ -42,7 +43,7 @@ def apply_pptx_revisions(
                 text_shapes = [s for s in slide.shapes if s.has_text_frame]
                 revised_parts = revised_text.split("\n\n")
                 for i, shape in enumerate(text_shapes):
-                    _set_shape_text(shape, revised_parts[i] if i < len(revised_parts) else "", font_name, font_size, bold, italic, underline)
+                    _set_shape_text(shape, revised_parts[i] if i < len(revised_parts) else "", font_name, font_size, bold, italic, underline, strike)
 
         elif scope["type"] == "document":
             parts = revised_text.split("\n\n---\n\n")
@@ -51,13 +52,14 @@ def apply_pptx_revisions(
                 slide_text = parts[slide_idx] if slide_idx < len(parts) else ""
                 slide_parts = slide_text.split("\n\n")
                 for i, shape in enumerate(text_shapes):
-                    _set_shape_text(shape, slide_parts[i] if i < len(slide_parts) else "", font_name, font_size, bold, italic, underline)
+                    _set_shape_text(shape, slide_parts[i] if i < len(slide_parts) else "", font_name, font_size, bold, italic, underline, strike)
 
     prs.save(output_path)
 
 
 def _apply_font(run: Any, font_name: str | None, font_size: float | None,
-                bold: bool | None, italic: bool | None, underline: bool | None) -> None:
+                bold: bool | None, italic: bool | None, underline: bool | None,
+                strike: bool | None) -> None:
     if font_name is not None:
         run.font.name = font_name
     if font_size is not None:
@@ -68,10 +70,13 @@ def _apply_font(run: Any, font_name: str | None, font_size: float | None,
         run.font.italic = italic
     if underline is not None:
         run.font.underline = underline
+    if strike is not None:
+        run.font.strike = strike
 
 
 def _set_shape_text(shape: Any, text: str, font_name: str | None = None, font_size: float | None = None,
-                    bold: bool | None = None, italic: bool | None = None, underline: bool | None = None) -> None:
+                    bold: bool | None = None, italic: bool | None = None, underline: bool | None = None,
+                    strike: bool | None = None) -> None:
     tf = shape.text_frame
     if not tf.paragraphs:
         return
@@ -81,7 +86,7 @@ def _set_shape_text(shape: Any, text: str, font_name: str | None = None, font_si
         for run in first_para.runs[1:]:
             run.text = ""
         for run in first_para.runs:
-            _apply_font(run, font_name, font_size, bold, italic, underline)
+            _apply_font(run, font_name, font_size, bold, italic, underline, strike)
     # Remove extra paragraphs
     for para in tf.paragraphs[1:]:
         p_elem = para._p
