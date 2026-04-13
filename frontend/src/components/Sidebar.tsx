@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react'
-import { Settings2, ArrowLeft } from 'lucide-react'
+import { Settings2, ArrowLeft, Sparkles, Loader2, MousePointer } from 'lucide-react'
 import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure } from '../types'
 import { reviseDocument, applyRevisions } from '../api/client'
 import DiffViewer from './DiffViewer'
@@ -21,6 +21,15 @@ const DEFAULT_LLM: LLMConfig = {
   model: 'llama3.2',
   timeout: 120,
 }
+
+const SUGGESTIONS = [
+  'Make more concise',
+  'Fix grammar',
+  'More formal',
+  'Simplify language',
+  'Improve clarity',
+  'Stronger opening',
+]
 
 function loadSavedLLM(): LLMConfig {
   try {
@@ -129,14 +138,19 @@ export default function Sidebar({
     return `${selectedIndices.length} paragraph${selectedIndices.length > 1 ? 's' : ''} selected`
   })()
 
-  // Slide navigator for pptx (when no shape is selected)
   const pptxStructure = isPptx ? (doc.structure as PptxStructure) : null
 
   return (
     <aside className="border-l border-gray-200 bg-white flex flex-col flex-shrink-0" style={style}>
+
       {/* Header */}
       <div className="h-12 px-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-        <span className="font-medium text-gray-800">Edit</span>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-md bg-blue-500 flex items-center justify-center flex-shrink-0">
+            <Sparkles size={13} className="text-white" />
+          </div>
+          <span className="font-semibold text-sm text-gray-800">AI Edit</span>
+        </div>
         <button
           onClick={() => setShowSettings(true)}
           className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -146,7 +160,7 @@ export default function Sidebar({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+      <div className="flex-1 overflow-y-auto flex flex-col gap-4 p-4">
 
         {/* Slide navigator (pptx only) */}
         {isPptx && pptxStructure && (
@@ -155,7 +169,7 @@ export default function Sidebar({
               Slide
             </label>
             <select
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 transition-colors"
               value={currentSlide}
               onChange={(e) => onSlideChange(Number(e.target.value))}
             >
@@ -168,63 +182,94 @@ export default function Sidebar({
           </div>
         )}
 
-        {/* Selection status */}
-        <div className="text-xs rounded-lg px-3 py-2 border border-dashed border-gray-300 text-gray-500 leading-relaxed">
-          {selectionLabel ? (
-            <span className="text-blue-600 font-medium">{selectionLabel}</span>
-          ) : (
-            <>
-              <span className="font-medium text-gray-600">No selection</span>
-              {' '}— click or drag{' '}
-              {isPptx ? 'shapes on the slide' : 'paragraphs or table cells in the document'}.
-              Submitting without a selection revises the whole {isPptx ? 'slide' : 'document'}.
-            </>
-          )}
-        </div>
+        {/* Selection indicator */}
+        {selectionLabel ? (
+          <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2">
+            <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+            <span className="text-sm font-medium text-blue-700">{selectionLabel}</span>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2.5 rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5">
+            <MousePointer size={13} className="text-gray-400 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Click or drag to select {isPptx ? 'shapes' : 'paragraphs'}. Submitting without a selection revises the whole {isPptx ? 'slide' : 'document'}.
+            </p>
+          </div>
+        )}
 
         {/* Instruction */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-            Instruction
-          </label>
+        <div className="flex flex-col gap-2">
           <textarea
-            className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder-gray-400"
-            rows={3}
-            placeholder="e.g. Make this more concise and formal"
+            className="w-full border border-gray-200 rounded-xl bg-gray-50 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 focus:bg-white transition-all placeholder-gray-400"
+            rows={4}
+            placeholder="What would you like to change?"
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleRevise()
             }}
           />
-          <p className="text-xs text-gray-400 mt-1">⌘ Enter to submit</p>
+
+          {/* Suggestion chips */}
+          {!instruction && (
+            <div className="flex flex-wrap gap-1.5">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setInstruction(s)}
+                  className="text-xs px-2.5 py-1 rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300 transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <p className="text-xs text-gray-400">⌘ Enter to submit</p>
         </div>
 
+        {/* Error */}
         {error && (
           <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
             {error}
           </div>
         )}
 
+        {/* Revise button */}
         <button
           onClick={handleRevise}
           disabled={loading || !instruction.trim()}
-          className="w-full py-2.5 bg-blue-500 text-white rounded-lg font-medium text-sm hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="w-full py-2.5 rounded-xl font-semibold text-sm bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
         >
-          {loading ? 'Revising…' : 'Revise'}
+          {loading ? (
+            <>
+              <Loader2 size={14} className="animate-spin" />
+              Revising…
+            </>
+          ) : (
+            <>
+              <Sparkles size={14} />
+              Revise
+            </>
+          )}
         </button>
 
         {/* Revisions */}
         {revisions.length > 0 && (
           <div className="flex flex-col gap-3">
-            {revisions.length > 1 && (
-              <button
-                onClick={handleAcceptAll}
-                className="w-full py-2 border border-green-500 text-green-600 rounded-lg text-sm font-medium hover:bg-green-50 transition-colors"
-              >
-                Accept all ({revisions.length})
-              </button>
-            )}
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                {revisions.length} revision{revisions.length > 1 ? 's' : ''}
+              </span>
+              {revisions.length > 1 && (
+                <button
+                  onClick={handleAcceptAll}
+                  className="text-xs font-medium text-green-600 hover:text-green-700 transition-colors"
+                >
+                  Accept all
+                </button>
+              )}
+            </div>
             {revisions.map((revision, i) => (
               <DiffViewer
                 key={i}
@@ -236,6 +281,7 @@ export default function Sidebar({
             ))}
           </div>
         )}
+
       </div>
     </aside>
   )
