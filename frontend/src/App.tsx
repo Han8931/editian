@@ -23,8 +23,15 @@ const LS_MODE       = 'editian_mode'
 // Stored shape: minimal — no doc (too large for localStorage)
 interface StoredWorkspace { id: string; name: string; fileId: string | null; parentId?: string }
 
+function makeId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 function newWorkspace(): Workspace {
-  return { id: crypto.randomUUID(), name: 'New workspace', doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null }
+  return { id: makeId(), name: 'New workspace', doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null }
 }
 
 function loadStoredWorkspaces(): StoredWorkspace[] {
@@ -148,7 +155,7 @@ export default function App() {
       const branchedDoc = await branchFile(ws.doc.file_id)
       const siblingCount = workspaces.filter((w) => w.parentId === id).length
       const branch: Workspace = {
-        id: crypto.randomUUID(),
+        id: makeId(),
         name: `${ws.name} — branch ${siblingCount + 1}`,
         doc: branchedDoc,
         currentSlide: ws.currentSlide,
