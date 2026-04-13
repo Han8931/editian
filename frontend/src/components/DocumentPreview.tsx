@@ -549,9 +549,9 @@ export default function DocumentPreview({
             toolbarInteractionRef.current = false
           })
         }}
-        className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0"
+        className="relative flex items-center px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0 h-12"
       >
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
             <div className="relative">
               <button
@@ -672,7 +672,7 @@ export default function DocumentPreview({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           {hasPendingEdit ? (
             <span className="text-xs font-medium text-amber-600 select-none">Unsaved changes</span>
           ) : hasActiveEditor ? (
