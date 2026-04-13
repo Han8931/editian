@@ -1,7 +1,16 @@
 import shutil
 from typing import Any
+from pptx.enum.text import PP_ALIGN
 from pptx import Presentation
 from pptx.util import Pt
+
+
+_ALIGN_MAP = {
+    "left": PP_ALIGN.LEFT,
+    "center": PP_ALIGN.CENTER,
+    "right": PP_ALIGN.RIGHT,
+    "justify": PP_ALIGN.JUSTIFY,
+}
 
 
 def apply_pptx_revisions(
@@ -20,6 +29,7 @@ def apply_pptx_revisions(
 
         font_name: str | None  = revision.get("font_name")
         font_size: float | None = revision.get("font_size")
+        align: str | None      = revision.get("align")
         bold: bool | None      = revision.get("bold")
         italic: bool | None    = revision.get("italic")
         underline: bool | None = revision.get("underline")
@@ -34,7 +44,7 @@ def apply_pptx_revisions(
                     if shape_idx < len(slide.shapes):
                         s = slide.shapes[shape_idx]
                         if s.has_text_frame:
-                            _set_shape_text(s, revised_text, font_name, font_size, bold, italic, underline, strike)
+                            _set_shape_text(s, revised_text, font_name, font_size, align, bold, italic, underline, strike)
 
         elif scope["type"] == "slide":
             slide_idx = scope.get("slide_index")
@@ -43,7 +53,7 @@ def apply_pptx_revisions(
                 text_shapes = [s for s in slide.shapes if s.has_text_frame]
                 revised_parts = revised_text.split("\n\n")
                 for i, shape in enumerate(text_shapes):
-                    _set_shape_text(shape, revised_parts[i] if i < len(revised_parts) else "", font_name, font_size, bold, italic, underline, strike)
+                    _set_shape_text(shape, revised_parts[i] if i < len(revised_parts) else "", font_name, font_size, align, bold, italic, underline, strike)
 
         elif scope["type"] == "document":
             parts = revised_text.split("\n\n---\n\n")
@@ -52,7 +62,7 @@ def apply_pptx_revisions(
                 slide_text = parts[slide_idx] if slide_idx < len(parts) else ""
                 slide_parts = slide_text.split("\n\n")
                 for i, shape in enumerate(text_shapes):
-                    _set_shape_text(shape, slide_parts[i] if i < len(slide_parts) else "", font_name, font_size, bold, italic, underline, strike)
+                    _set_shape_text(shape, slide_parts[i] if i < len(slide_parts) else "", font_name, font_size, align, bold, italic, underline, strike)
 
     prs.save(output_path)
 
@@ -75,8 +85,8 @@ def _apply_font(run: Any, font_name: str | None, font_size: float | None,
 
 
 def _set_shape_text(shape: Any, text: str, font_name: str | None = None, font_size: float | None = None,
-                    bold: bool | None = None, italic: bool | None = None, underline: bool | None = None,
-                    strike: bool | None = None) -> None:
+                    align: str | None = None, bold: bool | None = None, italic: bool | None = None,
+                    underline: bool | None = None, strike: bool | None = None) -> None:
     tf = shape.text_frame
     if not tf.paragraphs:
         return
@@ -85,8 +95,16 @@ def _set_shape_text(shape: Any, text: str, font_name: str | None = None, font_si
         first_para.runs[0].text = text
         for run in first_para.runs[1:]:
             run.text = ""
-        for run in first_para.runs:
-            _apply_font(run, font_name, font_size, bold, italic, underline, strike)
+        runs = first_para.runs
+    else:
+        runs = [first_para.add_run()]
+        runs[0].text = text
+
+    if align is not None and align in _ALIGN_MAP:
+        first_para.alignment = _ALIGN_MAP[align]
+
+    for run in runs:
+        _apply_font(run, font_name, font_size, bold, italic, underline, strike)
     # Remove extra paragraphs
     for para in tf.paragraphs[1:]:
         p_elem = para._p

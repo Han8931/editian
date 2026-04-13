@@ -6,6 +6,8 @@ export interface LLMConfig {
   timeout: number  // seconds
 }
 
+export type ParagraphAlign = 'left' | 'center' | 'right' | 'justify'
+
 export interface Paragraph {
   index: number
   text: string
@@ -25,7 +27,7 @@ export interface TextRun {
 
 export interface SlideParagraph {
   text: string
-  align?: string             // 'left' | 'center' | 'right' | 'justify'
+  align?: ParagraphAlign
   runs: TextRun[]
 }
 
@@ -99,6 +101,7 @@ export interface Revision {
   revised: string
   font_name?: string | null
   font_size?: number | null
+  align?: ParagraphAlign | null
   bold?: boolean | null
   italic?: boolean | null
   underline?: boolean | null

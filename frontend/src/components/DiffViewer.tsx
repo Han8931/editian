@@ -18,10 +18,11 @@ export default function DiffViewer({ revision, index, onAccept, onReject }: Prop
       </div>
 
       <div className="p-3 flex flex-col gap-2">
-        {(revision.font_name || revision.font_size || revision.bold != null || revision.italic != null || revision.underline != null || revision.strike != null) && (
+        {(revision.font_name || revision.font_size || revision.align || revision.bold != null || revision.italic != null || revision.underline != null || revision.strike != null) && (
           <div className="text-xs bg-blue-50 text-blue-700 rounded-lg px-2 py-1.5 flex flex-wrap gap-3">
             {revision.font_name && <span>Font: <span className="font-semibold">{revision.font_name}</span></span>}
             {revision.font_size && <span>Size: <span className="font-semibold">{revision.font_size}pt</span></span>}
+            {revision.align && <span>Align: <span className="font-semibold capitalize">{revision.align}</span></span>}
             {revision.bold != null && <span>Bold: <span className="font-semibold">{revision.bold ? 'on' : 'off'}</span></span>}
             {revision.italic != null && <span>Italic: <span className="font-semibold">{revision.italic ? 'on' : 'off'}</span></span>}
             {revision.underline != null && <span>Underline: <span className="font-semibold">{revision.underline ? 'on' : 'off'}</span></span>}
@@ -41,6 +42,7 @@ export default function DiffViewer({ revision, index, onAccept, onReject }: Prop
             style={{
             ...(revision.font_name  ? { fontFamily:  revision.font_name }          : {}),
             ...(revision.font_size  ? { fontSize:    `${revision.font_size}pt` }   : {}),
+            ...(revision.align      ? { textAlign:   revision.align }               : {}),
             ...(revision.bold       ? { fontWeight:  'bold' }                       : {}),
             ...(revision.italic     ? { fontStyle:   'italic' }                     : {}),
             ...((revision.underline || revision.strike) ? { textDecoration: [revision.underline ? 'underline' : '', revision.strike ? 'line-through' : ''].filter(Boolean).join(' ') } : {}),

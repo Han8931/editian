@@ -160,6 +160,7 @@ class ApplyRevision(BaseModel):
     revised: str
     font_name: Optional[str] = None
     font_size: Optional[float] = None
+    align: Optional[str] = None
     bold: Optional[bool] = None
     italic: Optional[bool] = None
     underline: Optional[bool] = None
@@ -222,7 +223,8 @@ _SYSTEM_PROMPT = (
     "do NOT revise them. Only revise items with a numeric label (e.g. [3], [shape=2]). "
     "You MUST call the tool — even if only formatting changes are needed and the text itself stays the same. "
     "For formatting-only changes (font, size, bold, italic, underline), call the tool with the original text "
-    "unchanged in revised_text and set the relevant formatting parameters. "
+    "unchanged in revised_text and set the relevant formatting parameters. Alignment changes should use align="
+    "left, center, right, or justify. "
     "revised_text must be plain text only — never include HTML, XML, or any markup. "
     "Do not add explanations."
 )
@@ -270,6 +272,7 @@ def _tool(name: str, description: str, properties: dict, required: list[str]) ->
 
 _FONT_NAME_PROP  = {"type": "string",  "description": "Font name to apply (e.g. 'Arial'). Omit if not changing."}
 _FONT_SIZE_PROP  = {"type": "number",  "description": "Font size in points (e.g. 24). Omit if not changing."}
+_ALIGN_PROP      = {"type": "string",  "enum": ["left", "center", "right", "justify"], "description": "Paragraph alignment. Omit if not changing."}
 _BOLD_PROP       = {"type": "boolean", "description": "Set to true/false to enable/disable bold. Omit if not changing."}
 _ITALIC_PROP     = {"type": "boolean", "description": "Set to true/false to enable/disable italic. Omit if not changing."}
 _UNDERLINE_PROP  = {"type": "boolean", "description": "Set to true/false to enable/disable underline. Omit if not changing."}
@@ -277,6 +280,7 @@ _UNDERLINE_PROP  = {"type": "boolean", "description": "Set to true/false to enab
 _FORMAT_PROPS = {
     "font_name": _FONT_NAME_PROP,
     "font_size": _FONT_SIZE_PROP,
+    "align":     _ALIGN_PROP,
     "bold":      _BOLD_PROP,
     "italic":    _ITALIC_PROP,
     "underline": _UNDERLINE_PROP,
@@ -284,14 +288,14 @@ _FORMAT_PROPS = {
 
 _REVISE_TEXT_TOOL = _tool(
     "revise_text",
-    "Provide the revised text and any formatting changes (font_name, font_size, bold, italic, underline).",
+    "Provide the revised text and any formatting changes (font_name, font_size, align, bold, italic, underline).",
     {"revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"}, **_FORMAT_PROPS},
     ["revised_text"],
 )
 
 _REVISE_PARAGRAPH_TOOL = _tool(
     "revise_paragraph",
-    "Update a paragraph's text and/or formatting (font_name, font_size, bold, italic, underline).",
+    "Update a paragraph's text and/or formatting (font_name, font_size, align, bold, italic, underline).",
     {
         "index": {"type": "integer", "description": "Paragraph index (as shown in brackets)"},
         "revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"},
@@ -302,7 +306,7 @@ _REVISE_PARAGRAPH_TOOL = _tool(
 
 _REVISE_CELL_TOOL = _tool(
     "revise_table_cell",
-    "Update a table cell's text and/or formatting (font_name, font_size, bold, italic, underline).",
+    "Update a table cell's text and/or formatting (font_name, font_size, align, bold, italic, underline).",
     {
         "row_index": {"type": "integer"},
         "cell_index": {"type": "integer"},
@@ -314,7 +318,7 @@ _REVISE_CELL_TOOL = _tool(
 
 _REVISE_SHAPE_TOOL = _tool(
     "revise_shape",
-    "Update a slide shape's text and/or formatting (font_name, font_size, bold, italic, underline).",
+    "Update a slide shape's text and/or formatting (font_name, font_size, align, bold, italic, underline).",
     {
         "slide_index": {"type": "integer"},
         "shape_index": {"type": "integer"},
@@ -361,6 +365,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
@@ -381,6 +386,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
@@ -413,6 +419,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
@@ -441,6 +448,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
@@ -467,6 +475,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
@@ -498,6 +507,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
@@ -513,10 +523,11 @@ async def _do_revise(req, file_type, file_path, llm):
                         if idx in shape_map:
                             revisions.append({
                                 "scope": {"type": "shape", "slide_index": slide_idx, "shape_indices": [idx]},
-                                "original": shape_map[idx]["text"],
-                                "revised": args["revised_text"],
-                                "font_name": args.get("font_name"),
+                            "original": shape_map[idx]["text"],
+                            "revised": args["revised_text"],
+                            "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
+                            "align": args.get("align"),
                             "bold": args.get("bold"),
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),

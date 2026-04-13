@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { uploadFile } from '../api/client'
 import type { UploadResponse } from '../types'
+import editianLogo from '../../../assets/editian_icon.svg'
 
 interface Props {
   onUpload: (response: UploadResponse) => void
@@ -37,8 +38,7 @@ export default function FileUpload({ onUpload }: Props) {
   }, [handleFile])
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <div className="text-2xl font-semibold text-gray-700">Editian</div>
+    <div className="flex flex-col items-center gap-4">
       <div
         onDrop={onDrop}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
@@ -61,7 +61,15 @@ export default function FileUpload({ onUpload }: Props) {
           <div className="text-gray-500 text-sm">Processing document…</div>
         ) : (
           <>
-            <div className="text-5xl">📄</div>
+            <div className="flex flex-col items-center gap-2 mb-1">
+              <img
+                src={editianLogo}
+                alt="Editian logo"
+                className="h-12 w-12 select-none"
+                draggable={false}
+              />
+              <div className="text-xl font-semibold text-gray-700">Editian</div>
+            </div>
             <div className="text-center">
               <div className="font-medium text-gray-700">Drop your file here</div>
               <div className="text-sm text-gray-400 mt-1">or click to browse</div>

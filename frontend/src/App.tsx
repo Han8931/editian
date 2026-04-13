@@ -39,6 +39,20 @@ function loadStoredWorkspaces(): StoredWorkspace[] {
   try { return JSON.parse(localStorage.getItem(LS_WORKSPACES) ?? '[]') } catch { return [] }
 }
 
+function swallowPointerEvent(event: React.SyntheticEvent) {
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  )
+}
+
 export default function App() {
   // ── Workspace state ────────────────────────────────────────────────────
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => {
@@ -289,21 +303,41 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null
-      const isEditableTarget =
-        !!target && (
-          target.isContentEditable ||
-          target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement ||
-          target instanceof HTMLSelectElement
-        )
+      const key = e.key.toLowerCase()
       if (e.key === 'Escape') { setShowDownload(false); return }
-      if (isEditableTarget) return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey && doc) { e.preventDefault(); handleUndo() }
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey)) && doc) { e.preventDefault(); handleRedo() }
+      if (isEditableTarget(e.target)) return
+      if ((e.metaKey || e.ctrlKey) && key === 'z' && !e.shiftKey && doc) {
+        e.preventDefault()
+        e.stopPropagation()
+        handleUndo()
+      }
+      if ((e.metaKey || e.ctrlKey) && (key === 'y' || (key === 'z' && e.shiftKey)) && doc) {
+        e.preventDefault()
+        e.stopPropagation()
+        handleRedo()
+      }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [doc, activeId])
+
+  useEffect(() => {
+    function onBeforeInput(e: InputEvent) {
+      if (!doc) return
+      if (isEditableTarget(e.target)) return
+      if (e.inputType === 'historyUndo') {
+        e.preventDefault()
+        e.stopPropagation()
+        handleUndo()
+      } else if (e.inputType === 'historyRedo') {
+        e.preventDefault()
+        e.stopPropagation()
+        handleRedo()
+      }
+    }
+
+    document.addEventListener('beforeinput', onBeforeInput, true)
+    return () => document.removeEventListener('beforeinput', onBeforeInput, true)
   }, [doc, activeId])
 
   useEffect(() => {
@@ -333,31 +367,55 @@ export default function App() {
           </>
         )}
         <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-1">
-            <button onClick={handleUndo} disabled={!doc?.can_undo} title="Undo (⌘Z)"
-              className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↩</button>
-            <button onClick={handleRedo} disabled={!doc?.can_redo} title="Redo (⌘⇧Z)"
-              className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↪</button>
-          </div>
-          {doc && (
+          {doc && mode === 'ai' && (
             <>
-              <div className="w-px h-4 bg-gray-200" />
-              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-                {(['ai', 'manual'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setMode(m)}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                      mode === m
-                        ? 'bg-white text-gray-800 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {m === 'ai' ? 'AI' : 'Manual'}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onPointerDown={(e) => {
+                    swallowPointerEvent(e)
+                    if (e.button !== 0) return
+                    handleUndo()
+                  }}
+                  onClick={swallowPointerEvent}
+                  onAuxClick={swallowPointerEvent}
+                  onContextMenu={swallowPointerEvent}
+                  disabled={!doc.can_undo}
+                  title="Undo (⌘Z)"
+                  className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↩</button>
+                <button
+                  type="button"
+                  onPointerDown={(e) => {
+                    swallowPointerEvent(e)
+                    if (e.button !== 0) return
+                    handleRedo()
+                  }}
+                  onClick={swallowPointerEvent}
+                  onAuxClick={swallowPointerEvent}
+                  onContextMenu={swallowPointerEvent}
+                  disabled={!doc.can_redo}
+                  title="Redo (⌘⇧Z)"
+                  className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↪</button>
               </div>
+              <div className="w-px h-4 bg-gray-200" />
             </>
+          )}
+          {doc && (
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+              {(['ai', 'manual'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    mode === m
+                      ? 'bg-white text-gray-800 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {m === 'ai' ? 'AI' : 'Manual'}
+                </button>
+              ))}
+            </div>
           )}
           <div className="w-px h-4 bg-gray-200" />
           {doc && (

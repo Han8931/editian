@@ -1,5 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react'
-import type { UploadResponse, PptxStructure, DocxStructure, Revision } from '../types'
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  ChevronDown,
+  Italic,
+  Redo2,
+  Save,
+  Strikethrough,
+  Underline,
+  Undo2,
+} from 'lucide-react'
+import type { UploadResponse, PptxStructure, DocxStructure, Revision, ParagraphAlign } from '../types'
 
 interface CellRef { t: number; r: number; c: number }
 
@@ -35,7 +48,7 @@ type ManualEditRef = {
   isCancelled: boolean
 } | null
 
-type CapturedFormatting = Pick<Revision, 'font_name' | 'font_size' | 'bold' | 'italic' | 'underline' | 'strike'>
+type CapturedFormatting = Pick<Revision, 'font_name' | 'font_size' | 'align' | 'bold' | 'italic' | 'underline' | 'strike'>
 
 /** Returns the data-para-index of the element under the pointer, or null. */
 function paraIndexAt(x: number, y: number): number | null {
@@ -87,6 +100,32 @@ function hasTextContent(el: Element): boolean {
   return !!el.textContent?.replace(/\s+/g, '')
 }
 
+function normalizeTextAlign(value: string | null | undefined): ParagraphAlign | null {
+  const align = value?.trim().toLowerCase()
+  if (!align || align === 'auto' || align === 'start' || align === '-webkit-auto') return 'left'
+  if (align === 'end') return 'right'
+  if (align === 'left' || align === 'center' || align === 'right' || align === 'justify') return align
+  return null
+}
+
+function alignmentFromElement(root: HTMLElement): ParagraphAlign | null {
+  const ownAlign = normalizeTextAlign(window.getComputedStyle(root).textAlign)
+  const blocks = [root, ...Array.from(root.querySelectorAll<HTMLElement>('p,div'))].filter(hasTextContent)
+
+  let commonAlign: ParagraphAlign | null = null
+  for (const block of blocks) {
+    const align = normalizeTextAlign(window.getComputedStyle(block).textAlign)
+    if (!align) continue
+    if (!commonAlign) {
+      commonAlign = align
+      continue
+    }
+    if (commonAlign !== align) return ownAlign ?? commonAlign
+  }
+
+  return commonAlign ?? ownAlign
+}
+
 function commandStateFromElement(root: HTMLElement, selector: string, cssCheck: (style: CSSStyleDeclaration) => boolean): boolean | null {
   const nodes = Array.from(root.querySelectorAll(selector)).filter(hasTextContent)
   if (nodes.length > 0) return true
@@ -120,6 +159,7 @@ function captureFormatting(root: HTMLElement): CapturedFormatting {
   return {
     font_name: rawFontFamily && rawFontFamily !== 'sans-serif' ? rawFontFamily : null,
     font_size: fontSize,
+    align: alignmentFromElement(root),
     bold: commandStateFromElement(root, 'strong,b', (s) => Number.parseInt(s.fontWeight, 10) >= 600 || s.fontWeight === 'bold'),
     italic: commandStateFromElement(root, 'em,i', (s) => s.fontStyle === 'italic' || s.fontStyle === 'oblique'),
     underline: commandStateFromElement(root, 'u', (s) => s.textDecorationLine.includes('underline')),
@@ -145,10 +185,16 @@ function sameValue(a: string | number | boolean | null | undefined, b: string | 
 function formattingChanged(a: CapturedFormatting | undefined, b: CapturedFormatting): boolean {
   return !sameValue(a?.font_name, b.font_name)
     || !sameValue(a?.font_size, b.font_size)
+    || !sameValue(a?.align, b.align)
     || !sameValue(a?.bold, b.bold)
     || !sameValue(a?.italic, b.italic)
     || !sameValue(a?.underline, b.underline)
     || !sameValue(a?.strike, b.strike)
+}
+
+function swallowPointerEvent(event: React.SyntheticEvent) {
+  event.preventDefault()
+  event.stopPropagation()
 }
 
 export default function DocumentPreview({
@@ -175,6 +221,10 @@ export default function DocumentPreview({
   const [zoom, setZoom] = useState(100)
   const manualShapeElementRef = useRef<HTMLElement | null>(null)
   const manualShapeDraftRef = useRef<string | null>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const toolbarInteractionRef = useRef(false)
+  const [showFontSizeMenu, setShowFontSizeMenu] = useState(false)
+  const [manualEditorActive, setManualEditorActive] = useState(false)
 
   // ── Manual mode state ────────────────────────────────────────────────────
   // Tracks the currently-edited DOM element for inline DOCX editing
@@ -205,6 +255,23 @@ export default function DocumentPreview({
     if (!isManual && manualEditRef.current) commitDocxEdit()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isManual])
+
+  useEffect(() => {
+    if (!showFontSizeMenu) return
+
+    function handlePointerDown(event: MouseEvent) {
+      if (toolbarRef.current?.contains(event.target as Node)) return
+      setShowFontSizeMenu(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [showFontSizeMenu])
+
+  useEffect(() => {
+    setShowFontSizeMenu(false)
+    setManualEditorActive(false)
+  }, [doc.file_id, isManual])
 
   // ── DOCX manual edit helpers ─────────────────────────────────────────────
 
@@ -256,6 +323,7 @@ export default function DocumentPreview({
       originalFormatting: captureFormatting(el),
       isCancelled: false,
     }
+    setManualEditorActive(true)
 
     el.contentEditable = 'true'
     el.style.outline = '2px solid #3b82f6'
@@ -280,6 +348,7 @@ export default function DocumentPreview({
     if (!ref) return
     manualEditRef.current = null
     setHasPendingEdit(false)
+    setManualEditorActive(false)
 
     const { el, index, original, originalFormatting, isCancelled } = ref
     el.contentEditable = 'false'
@@ -408,6 +477,7 @@ export default function DocumentPreview({
   // ── Manual mode toolbar ─────────────────────────────────────────────────
 
   function handleManualSave() {
+    setShowFontSizeMenu(false)
     if (doc.file_type === 'docx') {
       commitDocxEdit()
     } else {
@@ -417,25 +487,44 @@ export default function DocumentPreview({
 
   function ManualToolbar() {
     if (!isManual) return null
+    const hasActiveEditor = manualEditorActive
+    const canSave = hasPendingEdit || hasActiveEditor
 
-    function fmt(cmd: string) {
-      document.execCommand(cmd, false, undefined)
-      activeManualEditor()?.focus()
-      setHasPendingEdit(true)
-      if (isManual && doc.file_type === 'pptx' && manualShapeElementRef.current) {
-        manualShapeDraftRef.current = manualShapeElementRef.current.innerText
-      }
-    }
-
-    function applyFontSize(fontSize: number) {
+    function withActiveEditor(run: (el: HTMLElement) => void) {
       const el = activeManualEditor()
       if (!el) return
-      applyBlockFontSize(el, fontSize)
+      setShowFontSizeMenu(false)
+      run(el)
       el.focus()
       setHasPendingEdit(true)
       if (doc.file_type === 'pptx') {
         manualShapeDraftRef.current = el.innerText
       }
+    }
+
+    function fmt(cmd: string) {
+      withActiveEditor(() => {
+        document.execCommand(cmd, false, undefined)
+      })
+    }
+
+    function applyFontSize(fontSize: number) {
+      withActiveEditor((el) => {
+        applyBlockFontSize(el, fontSize)
+      })
+      setShowFontSizeMenu(false)
+    }
+
+    function applyAlignment(align: Exclude<ParagraphAlign, 'justify'>) {
+      const command = align === 'center'
+        ? 'justifyCenter'
+        : align === 'right'
+        ? 'justifyRight'
+        : 'justifyLeft'
+
+      withActiveEditor(() => {
+        document.execCommand(command, false, undefined)
+      })
     }
 
     function triggerUndo() {
@@ -446,85 +535,165 @@ export default function DocumentPreview({
       if (!triggerManualRedo()) onRedo?.()
     }
 
-    const btnBase = 'w-8 h-8 flex items-center justify-center rounded transition-colors hover:bg-gray-100 text-gray-700 select-none'
+    const btnBase = 'h-8 min-w-8 inline-flex items-center justify-center rounded-lg px-2 transition-colors text-gray-700 select-none'
+    const toolButtonClass = `${btnBase} hover:bg-white`
 
     return (
-      <div className="flex items-center gap-0.5 px-4 py-1.5 bg-white border-b border-gray-200 flex-shrink-0">
-        <select
-          defaultValue=""
-          onChange={(e) => {
-            const next = Number(e.target.value)
-            if (Number.isFinite(next) && next > 0) applyFontSize(next)
-            e.target.value = ''
-          }}
-          title="Font size"
-          className="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
-        >
-          <option value="" disabled>Size</option>
-          {[10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].map((size) => (
-            <option key={size} value={size}>{size} pt</option>
-          ))}
-        </select>
-        <button
-          onMouseDown={(e) => { e.preventDefault(); fmt('bold') }}
-          title="Bold (⌘B)"
-          className={btnBase}
-        >
-          <strong className="text-sm leading-none">B</strong>
-        </button>
-        <button
-          onMouseDown={(e) => { e.preventDefault(); fmt('italic') }}
-          title="Italic (⌘I)"
-          className={btnBase}
-        >
-          <em className="text-sm leading-none not-italic font-medium" style={{ fontStyle: 'italic' }}>I</em>
-        </button>
-        <button
-          onMouseDown={(e) => { e.preventDefault(); fmt('underline') }}
-          title="Underline (⌘U)"
-          className={btnBase}
-        >
-          <u className="text-sm leading-none">U</u>
-        </button>
-        <button
-          onMouseDown={(e) => { e.preventDefault(); fmt('strikeThrough') }}
-          title="Strikethrough"
-          className={btnBase}
-        >
-          <s className="text-sm leading-none">S</s>
-        </button>
-        <div className="w-px h-5 bg-gray-200 mx-1" />
-        <button
-          onMouseDown={(e) => { e.preventDefault(); triggerUndo() }}
-          disabled={!activeManualEditor() && !canUndo}
-          title="Undo (⌘Z)"
-          className={`${btnBase} disabled:opacity-30 disabled:cursor-not-allowed`}
-        >
-          <span className="text-sm leading-none">↩</span>
-        </button>
-        <button
-          onMouseDown={(e) => { e.preventDefault(); triggerRedo() }}
-          disabled={!activeManualEditor() && !canRedo}
-          title="Redo (⌘⇧Z)"
-          className={`${btnBase} disabled:opacity-30 disabled:cursor-not-allowed`}
-        >
-          <span className="text-sm leading-none">↪</span>
-        </button>
-        <div className="flex-1" />
-        {hasPendingEdit && (
-          <span className="text-xs text-amber-500 mr-2 select-none">Unsaved changes</span>
-        )}
-        <button
-          onMouseDown={(e) => { e.preventDefault(); handleManualSave() }}
-          title="Save now (⌘S)"
-          className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors select-none ${
-            hasPendingEdit
-              ? 'bg-blue-500 text-white hover:bg-blue-600'
-              : 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600'
-          }`}
-        >
-          Save
-        </button>
+      <div
+        ref={toolbarRef}
+        onMouseDownCapture={() => {
+          toolbarInteractionRef.current = true
+        }}
+        onMouseUpCapture={() => {
+          requestAnimationFrame(() => {
+            toolbarInteractionRef.current = false
+          })
+        }}
+        className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+            <div className="relative">
+              <button
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setShowFontSizeMenu((open) => !open)
+                }}
+                title="Font size"
+                className={`${toolButtonClass} min-w-[4.75rem] justify-between bg-white`}
+              >
+                <span className="text-xs font-medium">Size</span>
+                <ChevronDown size={14} />
+              </button>
+              {showFontSizeMenu && (
+                <div className="absolute left-0 top-10 z-20 grid min-w-[5rem] grid-cols-1 gap-1 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
+                  {[10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].map((size) => (
+                    <button
+                      key={size}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        applyFontSize(size)
+                      }}
+                      className="rounded-lg px-2 py-1.5 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+                    >
+                      {size} pt
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); fmt('bold') }}
+              title="Bold (⌘B)"
+              className={toolButtonClass}
+            >
+              <Bold size={15} />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); fmt('italic') }}
+              title="Italic (⌘I)"
+              className={toolButtonClass}
+            >
+              <Italic size={15} />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); fmt('underline') }}
+              title="Underline (⌘U)"
+              className={toolButtonClass}
+            >
+              <Underline size={15} />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); fmt('strikeThrough') }}
+              title="Strikethrough"
+              className={toolButtonClass}
+            >
+              <Strikethrough size={15} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+            <button
+              onMouseDown={(e) => { e.preventDefault(); applyAlignment('left') }}
+              title="Align left"
+              className={toolButtonClass}
+            >
+              <AlignLeft size={15} />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); applyAlignment('center') }}
+              title="Align center"
+              className={toolButtonClass}
+            >
+              <AlignCenter size={15} />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); applyAlignment('right') }}
+              title="Align right"
+              className={toolButtonClass}
+            >
+              <AlignRight size={15} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                swallowPointerEvent(e)
+                if (e.button !== 0) return
+                triggerUndo()
+              }}
+              onClick={swallowPointerEvent}
+              onAuxClick={swallowPointerEvent}
+              onContextMenu={swallowPointerEvent}
+              disabled={!hasActiveEditor && !canUndo}
+              title="Undo (⌘Z)"
+              className={toolButtonClass}
+            >
+              <Undo2 size={15} />
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                swallowPointerEvent(e)
+                if (e.button !== 0) return
+                triggerRedo()
+              }}
+              onClick={swallowPointerEvent}
+              onAuxClick={swallowPointerEvent}
+              onContextMenu={swallowPointerEvent}
+              disabled={!hasActiveEditor && !canRedo}
+              title="Redo (⌘⇧Z)"
+              className={toolButtonClass}
+            >
+              <Redo2 size={15} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {hasPendingEdit ? (
+            <span className="text-xs font-medium text-amber-600 select-none">Unsaved changes</span>
+          ) : hasActiveEditor ? (
+            <span className="text-xs text-gray-400 select-none">Editing</span>
+          ) : null}
+          <button
+            onMouseDown={(e) => { e.preventDefault(); handleManualSave() }}
+            disabled={!canSave}
+            title="Save now (⌘S)"
+            className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors select-none ${
+              hasPendingEdit
+                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                : canSave
+                ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+            }`}
+          >
+            <Save size={14} />
+            Save
+          </button>
+        </div>
       </div>
     )
   }
@@ -534,6 +703,10 @@ export default function DocumentPreview({
   }
 
   function activeManualEditor(): HTMLElement | null {
+    const activeEl = document.activeElement
+    if (activeEl instanceof HTMLElement && activeEl.isContentEditable) {
+      return activeEl
+    }
     return manualEditRef.current?.el ?? manualShapeElementRef.current
   }
 
@@ -544,19 +717,52 @@ export default function DocumentPreview({
   }
 
   function triggerManualUndo() {
-    if (activeManualEditor() && isFocusedWithinManualEditor()) {
-      document.execCommand('undo', false, undefined)
-      return true
+    const editor = activeManualEditor()
+    if (!editor || !isFocusedWithinManualEditor()) return false
+
+    // Guard: only call execCommand('undo') when the editor has local unsaved changes.
+    // In Safari, calling execCommand('undo') with an empty undo stack escalates to the
+    // browser's native undo action (reopening closed tabs).
+    const ref = manualEditRef.current
+    if (ref) {
+      // DOCX: compare current text against the last-saved baseline
+      if (ref.el.innerText.trim() === ref.original.trim()) return false
+    } else {
+      // PPTX shape: compare the tracked draft against the original text
+      const draft = manualShapeDraftRef.current
+      const orig = editing?.original
+      if (draft != null && orig != null) {
+        if (draft.trim() === orig.trim()) return false
+      } else if (!hasPendingEdit) {
+        return false
+      }
     }
-    return false
+
+    document.execCommand('undo', false, undefined)
+    return true
   }
 
   function triggerManualRedo() {
-    if (activeManualEditor() && isFocusedWithinManualEditor()) {
-      document.execCommand('redo', false, undefined)
-      return true
+    const editor = activeManualEditor()
+    if (!editor || !isFocusedWithinManualEditor()) return false
+
+    // Same guard as undo: don't call execCommand('redo') when there are no local
+    // changes, to prevent Safari from escalating to browser-level redo.
+    const ref = manualEditRef.current
+    if (ref) {
+      if (ref.el.innerText.trim() === ref.original.trim()) return false
+    } else {
+      const draft = manualShapeDraftRef.current
+      const orig = editing?.original
+      if (draft != null && orig != null) {
+        if (draft.trim() === orig.trim()) return false
+      } else if (!hasPendingEdit) {
+        return false
+      }
     }
-    return false
+
+    document.execCommand('redo', false, undefined)
+    return true
   }
 
   function handleManualHistoryShortcut(e: React.KeyboardEvent<HTMLElement>) {
@@ -608,6 +814,7 @@ export default function DocumentPreview({
     manualShapeElementRef.current = null
     manualShapeDraftRef.current = null
     setHasPendingEdit(false)
+    setManualEditorActive(false)
     setEditing(null)
   }
 
@@ -615,6 +822,7 @@ export default function DocumentPreview({
     manualShapeElementRef.current = null
     manualShapeDraftRef.current = null
     setHasPendingEdit(false)
+    setManualEditorActive(false)
     setEditing(null)
   }
 
@@ -741,6 +949,7 @@ export default function DocumentPreview({
             onBlur={isManual ? (e: React.FocusEvent<HTMLDivElement>) => {
               const ref = manualEditRef.current
               if (!ref) return
+              if (toolbarInteractionRef.current) return
               // Only commit if the element losing focus is our editing element
               if ((e.target as Node) !== ref.el) return
               // Don't commit if focus moves within the same element
@@ -860,6 +1069,7 @@ export default function DocumentPreview({
                           if (!isEditing) {
                             manualShapeDraftRef.current = shape.text
                             setHasPendingEdit(false)
+                            setManualEditorActive(true)
                             setEditing({
                               index: shape.index,
                               original: shape.text,
@@ -887,6 +1097,7 @@ export default function DocumentPreview({
                         )
                       }}
                       onBlur={isManual && isEditing ? (e) => {
+                        if (toolbarInteractionRef.current) return
                         manualShapeDraftRef.current = (e.currentTarget as HTMLElement).innerText
                         saveEdit()
                       } : undefined}
@@ -932,7 +1143,7 @@ export default function DocumentPreview({
                               <span
                                 key={ri}
                                 style={{
-                                  fontSize: run.size ?? (shape.ph_idx === 0 ? 36 : 20),
+                                  fontSize: `${run.size ?? (shape.ph_idx === 0 ? 36 : 20)}pt`,
                                   fontFamily: run.font_name ?? 'sans-serif',
                                   fontWeight: run.bold ? 'bold' : 'normal',
                                   fontStyle: run.italic ? 'italic' : 'normal',
