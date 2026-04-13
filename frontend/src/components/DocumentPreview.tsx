@@ -13,6 +13,10 @@ interface Props {
   selectedTable?: number | null
   onTableSelect?: (tableIndex: number | null) => void
   onDirectEdit?: (revision: Revision) => void
+  onUndo?: () => void
+  onRedo?: () => void
+  canUndo?: boolean
+  canRedo?: boolean
 }
 
 type EditingState = {
@@ -146,6 +150,10 @@ export default function DocumentPreview({
   selectedTable,
   onTableSelect,
   onDirectEdit,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }: Props) {
   const isManual = mode === 'manual'
 
@@ -399,20 +407,65 @@ export default function DocumentPreview({
   function ManualToolbar() {
     if (!isManual) return null
 
+    function activeEditableElement(): HTMLElement | null {
+      return manualEditRef.current?.el ?? manualShapeElementRef.current
+    }
+
     function fmt(cmd: string) {
       document.execCommand(cmd, false, undefined)
-      manualEditRef.current?.el.focus()
-      manualShapeElementRef.current?.focus()
+      activeEditableElement()?.focus()
       setHasPendingEdit(true)
       if (isManual && doc.file_type === 'pptx' && manualShapeElementRef.current) {
         manualShapeDraftRef.current = manualShapeElementRef.current.innerText
       }
     }
 
+    function applyFontSize(fontSize: number) {
+      const el = activeEditableElement()
+      if (!el) return
+      el.style.fontSize = `${fontSize}pt`
+      el.focus()
+      setHasPendingEdit(true)
+      if (doc.file_type === 'pptx') {
+        manualShapeDraftRef.current = el.innerText
+      }
+    }
+
+    function triggerUndo() {
+      if (hasPendingEdit && activeEditableElement()) {
+        document.execCommand('undo', false, undefined)
+        return
+      }
+      onUndo?.()
+    }
+
+    function triggerRedo() {
+      if (hasPendingEdit && activeEditableElement()) {
+        document.execCommand('redo', false, undefined)
+        return
+      }
+      onRedo?.()
+    }
+
     const btnBase = 'w-8 h-8 flex items-center justify-center rounded transition-colors hover:bg-gray-100 text-gray-700 select-none'
 
     return (
       <div className="flex items-center gap-0.5 px-4 py-1.5 bg-white border-b border-gray-200 flex-shrink-0">
+        <select
+          defaultValue=""
+          onChange={(e) => {
+            const next = Number(e.target.value)
+            if (Number.isFinite(next) && next > 0) applyFontSize(next)
+            e.target.value = ''
+          }}
+          title="Font size"
+          className="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+        >
+          <option value="" disabled>Size</option>
+          {[10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].map((size) => (
+            <option key={size} value={size}>{size} pt</option>
+          ))}
+        </select>
         <button
           onMouseDown={(e) => { e.preventDefault(); fmt('bold') }}
           title="Bold (⌘B)"
@@ -441,6 +494,23 @@ export default function DocumentPreview({
         >
           <s className="text-sm leading-none">S</s>
         </button>
+        <div className="w-px h-5 bg-gray-200 mx-1" />
+        <button
+          onMouseDown={(e) => { e.preventDefault(); triggerUndo() }}
+          disabled={!hasPendingEdit && !canUndo}
+          title="Undo (⌘Z)"
+          className={`${btnBase} disabled:opacity-30 disabled:cursor-not-allowed`}
+        >
+          <span className="text-sm leading-none">↩</span>
+        </button>
+        <button
+          onMouseDown={(e) => { e.preventDefault(); triggerRedo() }}
+          disabled={!hasPendingEdit && !canRedo}
+          title="Redo (⌘⇧Z)"
+          className={`${btnBase} disabled:opacity-30 disabled:cursor-not-allowed`}
+        >
+          <span className="text-sm leading-none">↪</span>
+        </button>
         <div className="flex-1" />
         {hasPendingEdit && (
           <span className="text-xs text-amber-500 mr-2 select-none">Unsaved changes</span>
@@ -462,6 +532,21 @@ export default function DocumentPreview({
 
   function stopDrag() {
     isDragging.current = false
+  }
+
+  function handleManualHistoryShortcut(e: React.KeyboardEvent<HTMLElement>) {
+    if (!(e.metaKey || e.ctrlKey)) return
+    const key = e.key.toLowerCase()
+    const isRedo = key === 'y' || (key === 'z' && e.shiftKey)
+    const isUndo = key === 'z' && !e.shiftKey
+    if (!isUndo && !isRedo) return
+
+    if (hasPendingEdit) return
+
+    e.preventDefault()
+    e.stopPropagation()
+    if (isRedo) onRedo?.()
+    else onUndo?.()
   }
 
   function saveEdit() {
@@ -637,6 +722,8 @@ export default function DocumentPreview({
               commitDocxEdit()
             } : undefined}
             onKeyDown={isManual ? (e) => {
+              handleManualHistoryShortcut(e)
+              if (e.defaultPrevented) return
               if (e.key === 'Escape' && manualEditRef.current) {
                 e.preventDefault()
                 e.stopPropagation()
@@ -782,6 +869,8 @@ export default function DocumentPreview({
                         setHasPendingEdit(true)
                       } : undefined}
                       onKeyDown={isManual && isEditing ? (e) => {
+                        handleManualHistoryShortcut(e)
+                        if (e.defaultPrevented) return
                         if (e.key === 'Escape') {
                           e.preventDefault()
                           e.stopPropagation()

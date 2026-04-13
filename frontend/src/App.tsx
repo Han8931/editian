@@ -281,7 +281,16 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null
+      const isEditableTarget =
+        !!target && (
+          target.isContentEditable ||
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement
+        )
       if (e.key === 'Escape') { setShowDownload(false); return }
+      if (isEditableTarget) return
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey && doc) { e.preventDefault(); handleUndo() }
       if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey)) && doc) { e.preventDefault(); handleRedo() }
     }
@@ -420,6 +429,10 @@ export default function App() {
               selectedTable={active.selectedTable}
               onTableSelect={(idx) => patchActive({ selectedTable: idx, selectedIndices: [] })}
               onDirectEdit={handleDirectEdit}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              canUndo={doc.can_undo}
+              canRedo={doc.can_redo}
             />
 
             {/* Edit sidebar resize handle */}
