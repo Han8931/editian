@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
-import { Settings2, ArrowLeft, Sparkles, Loader2, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2 } from 'lucide-react'
+import { Settings2, ArrowLeft, Sparkles, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage } from '../types'
@@ -280,9 +280,28 @@ export default function Sidebar({
           <button
             onClick={handleRevise}
             disabled={editLoading || !instruction.trim()}
-            className="w-full py-2.5 rounded-xl font-semibold text-sm bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+            className={`w-full py-2.5 rounded-xl font-semibold text-sm text-white flex items-center justify-center gap-2 transition-all select-none
+              ${editLoading
+                ? 'btn-revise-loading cursor-default shadow-md shadow-blue-200'
+                : 'bg-blue-500 hover:bg-blue-600 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed'
+              }`}
           >
-            {editLoading ? <><Loader2 size={14} className="animate-spin" />Revising…</> : <><Sparkles size={14} />Revise</>}
+            {editLoading ? (
+              <>
+                <Sparkles size={14} className="opacity-80" />
+                <span className="tracking-wide">Revising</span>
+                <span className="flex items-center gap-[3px] ml-0.5 mt-px">
+                  <span className="dot-bounce" />
+                  <span className="dot-bounce" />
+                  <span className="dot-bounce" />
+                </span>
+              </>
+            ) : (
+              <>
+                <Sparkles size={14} />
+                Revise
+              </>
+            )}
           </button>
 
           {revisions.length > 0 && (

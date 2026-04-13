@@ -169,11 +169,6 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 
 - Support other languages
 - Layout change
-- Revising animation...
 - Close button remove
-- Editing tools 
-    - Align
-- Page info
 - Project directory
-- Move redo/undo
 - Logging

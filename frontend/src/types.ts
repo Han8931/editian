@@ -56,6 +56,7 @@ export interface Slide {
 export interface DocxStructure {
   paragraphs: Paragraph[]
   total: number
+  page_count?: number
 }
 
 export interface PptxStructure {

@@ -219,6 +219,9 @@ export default function DocumentPreview({
   const [editing, setEditing] = useState<EditingState>(null)
   const editTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [zoom, setZoom] = useState(100)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
   const manualShapeElementRef = useRef<HTMLElement | null>(null)
   const manualShapeDraftRef = useRef<string | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -440,6 +443,34 @@ export default function DocumentPreview({
     obs.observe(el)
     return () => obs.disconnect()
   }, [naturalW, doc.file_type])
+
+  // Standard page height in px at 100% zoom: A4/Letter ≈ 11in × 96dpi = 1056px
+  const PAGE_HEIGHT_PX = 1056
+
+  useEffect(() => {
+    if (doc.file_type !== 'docx') return
+    const el = scrollContainerRef.current
+    if (!el) return
+
+    function update() {
+      // zoom CSS property on the inner div scales scrollHeight proportionally
+      const zoomFactor = zoom / 100
+      const naturalHeight = el!.scrollHeight / zoomFactor
+      const total = Math.max(1, Math.ceil(naturalHeight / PAGE_HEIGHT_PX))
+      setTotalPages(total)
+      const naturalScrollTop = el!.scrollTop / zoomFactor
+      setCurrentPage(Math.min(total, Math.max(1, Math.floor(naturalScrollTop / PAGE_HEIGHT_PX) + 1)))
+    }
+
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const obs = new ResizeObserver(update)
+    obs.observe(el)
+    return () => {
+      el.removeEventListener('scroll', update)
+      obs.disconnect()
+    }
+  }, [doc.file_type, doc.html, zoom])
 
   function zoomIn() { setZoom((z) => Math.min(z + 10, 200)) }
   function zoomOut() { setZoom((z) => Math.max(z - 10, 50)) }
@@ -900,6 +931,7 @@ export default function DocumentPreview({
         <div className="flex-1 relative overflow-hidden">
           <ZoomControls />
           <div
+            ref={scrollContainerRef}
             className={`h-full overflow-auto p-8 ${isManual ? '' : 'select-none'}`}
             onMouseDown={(e) => {
               if (isManual) {
@@ -980,6 +1012,12 @@ export default function DocumentPreview({
               <div dangerouslySetInnerHTML={{ __html: displayHtml }} />
             </div>
           </div>
+        </div>
+        <div className="flex-shrink-0 h-8 bg-white border-t border-gray-200 flex items-center justify-center gap-1.5 select-none">
+          <span className="text-xs text-gray-400">Page</span>
+          <span className="text-xs font-semibold text-gray-700">{currentPage}</span>
+          <span className="text-xs text-gray-300">/</span>
+          <span className="text-xs text-gray-500">{totalPages}</span>
         </div>
         {EditingPanel()}
       </div>

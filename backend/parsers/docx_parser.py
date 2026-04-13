@@ -1,4 +1,6 @@
 import html as _html
+import zipfile
+from xml.etree import ElementTree as ET
 from docx import Document
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -287,6 +289,39 @@ def get_cell_text(file_path: str, table_index: int, row_index: int, cell_index: 
                 cell = row.cells[cell_index]
                 return '\n'.join(p.text for p in cell.paragraphs if p.text.strip())
     return None
+
+
+def get_docx_page_count(file_path: str) -> int:
+    """
+    Return the page count for the DOCX file.
+    Primary:  docProps/app.xml <Pages> element (set by Word on save).
+    Fallback: count <w:lastRenderedPageBreak> elements in document.xml
+              (page-break markers Word embeds in the body XML) + 1.
+    """
+    try:
+        with zipfile.ZipFile(file_path, 'r') as z:
+            names = z.namelist()
+
+            # Primary: app.xml metadata
+            if 'docProps/app.xml' in names:
+                root = ET.fromstring(z.read('docProps/app.xml'))
+                ns = {'ep': 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'}
+                el = root.find('ep:Pages', ns)
+                if el is not None and el.text:
+                    count = int(el.text)
+                    if count > 0:
+                        return count
+
+            # Fallback: lastRenderedPageBreak markers in document.xml
+            doc_entry = next((n for n in names if n.endswith('word/document.xml')), None)
+            if doc_entry:
+                xml = z.read(doc_entry).decode('utf-8', errors='replace')
+                breaks = xml.count('<w:lastRenderedPageBreak')
+                if breaks > 0:
+                    return breaks + 1
+    except Exception:
+        pass
+    return 1
 
 
 def parse_docx(file_path: str) -> dict[str, Any]:
