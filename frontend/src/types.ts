@@ -31,10 +31,15 @@ export interface SlideParagraph {
   runs: TextRun[]
 }
 
+export interface TableCell {
+  text: string
+  fill?: string | null       // '#RRGGBB'
+}
+
 export interface Shape {
   index: number
   name: string
-  shape_type: 'text' | 'image'
+  shape_type: 'text' | 'image' | 'table'
   text: string
   left: number               // EMU
   top: number                // EMU
@@ -44,13 +49,15 @@ export interface Shape {
   fill_color?: string | null
   ph_idx?: number | null     // 0 = title, 1 = body/subtitle
   vertical_anchor?: string   // 'top' | 'middle' | 'bottom'
-  image_src?: string | null  // base64 data URL for image shapes
+  image_src?: string | null  // image URL or data URL for image shapes
+  table_data?: TableCell[][]  // rows × cols for table shapes
 }
 
 export interface Slide {
   index: number
   shapes: Shape[]
   background?: string | null
+  background_image_src?: string | null
 }
 
 export interface DocxStructure {

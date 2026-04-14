@@ -1,6 +1,7 @@
 import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const UPLOAD_TIMEOUT_MS = 60_000
 
 async function apiError(res: Response): Promise<Error> {
   try {
@@ -14,7 +15,23 @@ async function apiError(res: Response): Promise<Error> {
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${BASE_URL}/api/upload`, { method: 'POST', body: form })
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/api/upload`, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Upload timed out while processing this file.')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
   if (!res.ok) throw await apiError(res)
   return res.json()
 }

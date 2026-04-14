@@ -171,5 +171,6 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - Layout change
 - Close button remove
 - Logging
-- Manual mode table issue
 - PPTX display issue
+- Bullet / Font type
+- Revise result style

@@ -1,8 +1,10 @@
 import uuid
 import json
 import shutil
+import hashlib
 from pathlib import Path
 import os
+import mimetypes
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +32,8 @@ app.add_middleware(
 # Persistent storage directory
 FILES_DIR = Path.home() / ".editian" / "files"
 FILES_DIR.mkdir(parents=True, exist_ok=True)
+ASSETS_DIR = FILES_DIR.parent / "assets"
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_FILE = FILES_DIR.parent / "registry.json"
 
 load_dotenv(Path(__file__).with_name(".env"))
@@ -127,6 +131,34 @@ def _sync_file_to_remote(file_id: str) -> None:
     storage.upload_file(local_path, s3_key)
 
 
+def _asset_suffix(content_type: Optional[str], filename: Optional[str] = None) -> str:
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if filename:
+        suffix = Path(filename).suffix.lower()
+        if suffix:
+            return suffix
+    guessed = mimetypes.guess_extension(mime) if mime else None
+    if guessed == ".jpe":
+        return ".jpg"
+    return guessed or ".bin"
+
+
+def _pptx_asset_resolver(file_id: str):
+    asset_dir = ASSETS_DIR / file_id
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    def resolve(blob: bytes, content_type: Optional[str], filename: Optional[str] = None) -> str:
+        digest = hashlib.sha256(blob).hexdigest()
+        suffix = _asset_suffix(content_type, filename)
+        asset_name = f"{digest}{suffix}"
+        asset_path = asset_dir / asset_name
+        if not asset_path.exists():
+            asset_path.write_bytes(blob)
+        return f"/api/files/{file_id}/assets/{asset_name}"
+
+    return resolve
+
+
 # ---------- Models ----------
 
 class LLMConfig(BaseModel):
@@ -205,8 +237,16 @@ async def upload_file(file: UploadFile = File(...)):
         file_info["s3_key"] = s3_key
 
     _files[file_id] = file_info
+    try:
+        response = _build_response(file_id)
+    except Exception as exc:
+        _files.pop(file_id, None)
+        Path(file_info["path"]).unlink(missing_ok=True)
+        shutil.rmtree(ASSETS_DIR / file_id, ignore_errors=True)
+        raise HTTPException(422, f"Failed to parse uploaded {ext[1:]} file: {exc}") from exc
+
     _save_registry()
-    return _build_response(file_id)
+    return response
 
 
 @app.post("/api/revise")
@@ -459,7 +499,7 @@ async def _do_revise(req, file_type, file_path, llm):
                         })
 
     elif file_type == "pptx":
-        structure = parse_pptx(file_path)
+        structure = parse_pptx(file_path, _pptx_asset_resolver(req.file_id))
         slides = structure["slides"]
 
         if req.scope.type == "document":
@@ -616,6 +656,21 @@ async def get_file(file_id: str):
     return _build_response(file_id)
 
 
+@app.get("/api/files/{file_id}/assets/{asset_name}")
+async def get_file_asset(file_id: str, asset_name: str):
+    _get_file(file_id)
+    asset_root = (ASSETS_DIR / file_id).resolve()
+    asset_path = (asset_root / asset_name).resolve()
+    if asset_root not in asset_path.parents:
+        raise HTTPException(404, "Asset not found.")
+    if not asset_path.exists() or not asset_path.is_file():
+        raise HTTPException(404, "Asset not found.")
+    return FileResponse(
+        asset_path,
+        media_type=mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream",
+    )
+
+
 @app.post("/api/files/{file_id}/branch")
 async def branch_file(file_id: str):
     info = _get_file(file_id)
@@ -646,6 +701,7 @@ async def delete_file(file_id: str):
         Path(p).unlink(missing_ok=True)
     for p in _redo_stacks.pop(file_id, []):
         Path(p).unlink(missing_ok=True)
+    shutil.rmtree(ASSETS_DIR / file_id, ignore_errors=True)
     _save_registry()
     return {"ok": True}
 
@@ -669,7 +725,12 @@ _CHAT_SYSTEM_PROMPT = (
 )
 
 
-def _extract_selected_text(file_type: str, file_path: str, scope: RevisionScope) -> Optional[str]:
+def _extract_selected_text(
+    file_type: str,
+    file_path: str,
+    scope: RevisionScope,
+    file_id: Optional[str] = None,
+) -> Optional[str]:
     """Return the plain text of the selection, or None if the scope covers the whole document."""
     if scope.type == "document":
         return None
@@ -689,7 +750,7 @@ def _extract_selected_text(file_type: str, file_path: str, scope: RevisionScope)
             return "\n".join(c["text"] for c in cells if c["text"].strip()) or None
 
     elif file_type == "pptx":
-        structure = parse_pptx(file_path)
+        structure = parse_pptx(file_path, _pptx_asset_resolver(file_id) if file_id else None)
         slides = structure["slides"]
         slide_idx = scope.slide_index
         slide = next((s for s in slides if s["index"] == slide_idx), None)
@@ -716,7 +777,7 @@ async def chat(req: ChatRequest):
             p["text"] for p in structure["paragraphs"] if p["text"].strip()
         )
     else:
-        structure = parse_pptx(file_path)
+        structure = parse_pptx(file_path, _pptx_asset_resolver(req.file_id))
         lines = []
         for slide in structure["slides"]:
             slide_texts = [sh["text"] for sh in slide["shapes"] if sh["text"].strip()]
@@ -727,7 +788,7 @@ async def chat(req: ChatRequest):
     # Build system prompt — append selected passage when a scope is provided
     system_prompt = f"{_CHAT_SYSTEM_PROMPT}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
     if req.scope:
-        selected_text = _extract_selected_text(file_type, file_path, req.scope)
+        selected_text = _extract_selected_text(file_type, file_path, req.scope, req.file_id)
         if selected_text:
             system_prompt += (
                 "\n\nThe user has selected the following passage from the document. "
@@ -771,4 +832,8 @@ def _build_response(file_id: str) -> dict:
     if file_type == "docx":
         return {**base, "file_type": "docx", "structure": parse_docx(file_path), "html": get_docx_html(file_path)}
     else:
-        return {**base, "file_type": "pptx", "structure": parse_pptx(file_path)}
+        return {
+            **base,
+            "file_type": "pptx",
+            "structure": parse_pptx(file_path, _pptx_asset_resolver(file_id)),
+        }

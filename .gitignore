@@ -12,6 +12,8 @@ venv/
 .coverage.*
 *.txt
 !requirements.txt
+*.pptx
+*.docx
 
 # Build artifacts
 build/

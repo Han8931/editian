@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import type { UploadResponse, PptxStructure, DocxStructure, Revision, ParagraphAlign } from '../types'
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
 interface CellRef { t: number; r: number; c: number }
 
 interface Props {
@@ -64,6 +66,12 @@ function paraIndexAt(x: number, y: number): number | null {
 function rangeOf(a: number, b: number): number[] {
   const lo = Math.min(a, b), hi = Math.max(a, b)
   return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i)
+}
+
+function resolvePreviewImageSrc(src?: string | null): string | undefined {
+  if (!src) return undefined
+  if (/^(data:|https?:\/\/|blob:)/i.test(src)) return src
+  return new URL(src, `${API_BASE_URL}/`).toString()
 }
 
 /** Place the text caret at the given viewport coordinates (cross-browser). */
@@ -1155,6 +1163,7 @@ export default function DocumentPreview({
   // ── PPTX ────────────────────────────────────────────────────────────────
   const { slides } = doc.structure as PptxStructure
   const slide = slides[currentSlide]
+  const slideBackgroundImageSrc = resolvePreviewImageSrc(slide?.background_image_src)
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
@@ -1173,7 +1182,11 @@ export default function DocumentPreview({
             className="relative w-full shadow-2xl select-none overflow-hidden"
             style={{
               paddingTop: `${(naturalH / naturalW) * 100}%`,
-              background: slide?.background ?? '#ffffff',
+              backgroundColor: slide?.background ?? '#ffffff',
+              backgroundImage: slideBackgroundImageSrc ? `url("${slideBackgroundImageSrc}")` : undefined,
+              backgroundSize: slideBackgroundImageSrc ? '100% 100%' : undefined,
+              backgroundPosition: slideBackgroundImageSrc ? 'center' : undefined,
+              backgroundRepeat: slideBackgroundImageSrc ? 'no-repeat' : undefined,
               borderRadius: 4,
             }}
           >
@@ -1192,8 +1205,11 @@ export default function DocumentPreview({
               {slide?.shapes.length ? (
                 slide.shapes.map((shape, pos) => {
                   const isImage = shape.shape_type === 'image'
-                  const isSelected = !isImage && !isManual && selectedIndices.includes(shape.index)
-                  const isEditing = !isImage && editing?.index === shape.index
+                  const isTable = shape.shape_type === 'table'
+                  const isInteractive = !isImage && !isTable
+                  const isSelected = isInteractive && !isManual && selectedIndices.includes(shape.index)
+                  const isEditing = isInteractive && editing?.index === shape.index
+                  const resolvedImageSrc = isImage ? resolvePreviewImageSrc(shape.image_src) : undefined
                   const justify =
                     shape.vertical_anchor === 'middle' ? 'center'
                     : shape.vertical_anchor === 'bottom' ? 'flex-end'
@@ -1210,7 +1226,7 @@ export default function DocumentPreview({
                         width: shape.width / 12700,
                         height: shape.height / 12700,
                         boxSizing: 'border-box',
-                        ...(isImage ? {} : {
+                        ...(isInteractive ? {
                           padding: '4px 8px',
                           cursor: isManual ? 'text' : 'pointer',
                           display: 'flex',
@@ -1227,9 +1243,9 @@ export default function DocumentPreview({
                             ? '1px solid #93c5fd'
                             : undefined,
                           outlineOffset: 1,
-                        }),
+                        } : {}),
                       }}
-                      onMouseDown={isImage ? undefined : (e) => {
+                      onMouseDown={isInteractive ? (e) => {
                         if (isManual) {
                           // In manual mode: single click enters edit mode
                           if (!isEditing) {
@@ -1255,23 +1271,23 @@ export default function DocumentPreview({
                             ? []
                             : [shape.index],
                         )
-                      }}
-                      onMouseEnter={isImage || isManual ? undefined : () => {
+                      } : undefined}
+                      onMouseEnter={!isInteractive || isManual ? undefined : () => {
                         if (!isDragging.current || anchorIdx.current === null) return
                         onSelectionChange(
                           rangeOf(anchorIdx.current, pos).map((p) => slide.shapes[p].index),
                         )
                       }}
-                      onBlur={isManual && isEditing ? (e) => {
+                      onBlur={isInteractive && isManual && isEditing ? (e) => {
                         if (toolbarInteractionRef.current) return
                         manualShapeDraftRef.current = (e.currentTarget as HTMLElement).innerText
                         saveEdit()
                       } : undefined}
-                      onInput={isManual && isEditing ? (e) => {
+                      onInput={isInteractive && isManual && isEditing ? (e) => {
                         manualShapeDraftRef.current = (e.currentTarget as HTMLElement).innerText
                         setHasPendingEdit(true)
                       } : undefined}
-                      onKeyDown={isManual && isEditing ? (e) => {
+                      onKeyDown={isInteractive && isManual && isEditing ? (e) => {
                         handleManualHistoryShortcut(e)
                         if (e.defaultPrevented) return
                         if (e.key === 'Escape') {
@@ -1283,16 +1299,42 @@ export default function DocumentPreview({
                           saveEdit()
                         }
                       } : undefined}
-                      ref={isManual && isEditing ? (el) => {
+                      ref={isInteractive && isManual && isEditing ? (el) => {
                         manualShapeElementRef.current = el
                       } : undefined}
                     >
-                      {isImage && shape.image_src ? (
+                      {isImage && resolvedImageSrc ? (
                         <img
-                          src={shape.image_src}
+                          src={resolvedImageSrc}
                           draggable={false}
                           style={{ width: '100%', height: '100%', objectFit: 'fill', display: 'block' }}
                         />
+                      ) : isTable && shape.table_data ? (
+                        <table style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize: '12pt' }}>
+                          <tbody>
+                            {shape.table_data.map((row, ri) => (
+                              <tr key={ri}>
+                                {row.map((cell, ci) => (
+                                  <td
+                                    key={ci}
+                                    style={{
+                                      border: '1px solid #aaa',
+                                      padding: '2px 6px',
+                                      backgroundColor: cell.fill ?? (ri === 0 ? '#d9e1f2' : ci % 2 === 0 ? '#ffffff' : '#f2f2f2'),
+                                      fontWeight: ri === 0 ? 'bold' : 'normal',
+                                      verticalAlign: 'middle',
+                                      overflow: 'hidden',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-word',
+                                    }}
+                                  >
+                                    {cell.text}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       ) : (
                         shape.paragraphs.map((para, pi) => (
                           <p

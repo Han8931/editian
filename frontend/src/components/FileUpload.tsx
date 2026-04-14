@@ -23,8 +23,8 @@ export default function FileUpload({ onUpload }: Props) {
     try {
       const response = await uploadFile(file)
       onUpload(response)
-    } catch {
-      setError('Upload failed. Make sure the backend is running.')
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Upload failed.')
     } finally {
       setLoading(false)
     }
