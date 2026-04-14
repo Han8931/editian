@@ -18,7 +18,7 @@ import {
   Underline,
   Undo2,
 } from 'lucide-react'
-import type { UploadResponse, PptxStructure, DocxStructure, Revision, ParagraphAlign } from '../types'
+import type { UploadResponse, PptxStructure, DocxStructure, Revision, ParagraphAlign, Shape } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -76,6 +76,139 @@ function resolvePreviewImageSrc(src?: string | null): string | undefined {
   if (!src) return undefined
   if (/^(data:|https?:\/\/|blob:)/i.test(src)) return src
   return new URL(src, `${API_BASE_URL}/`).toString()
+}
+
+function shapeTransform(shape: { rotation?: number, flip_horizontal?: boolean, flip_vertical?: boolean }): string | undefined {
+  const transforms: string[] = []
+  if (shape.flip_horizontal) transforms.push('scaleX(-1)')
+  if (shape.flip_vertical) transforms.push('scaleY(-1)')
+  if (shape.rotation) transforms.push(`rotate(${shape.rotation}deg)`)
+  return transforms.length ? transforms.join(' ') : undefined
+}
+
+function svgDecorationStrokeWidth(shape: Shape): number {
+  const width = shape.width || 0
+  const height = shape.height || 0
+  const stroke = shape.stroke_width ?? 0
+  if (!stroke || !width || !height) return 1
+  const scale = Math.max(Math.min(width, height), 1)
+  return Math.max((stroke / scale) * 1000, 1)
+}
+
+function decorationBorderRadius(shape: Shape): string | undefined {
+  switch (shape.preset_geometry) {
+    case 'ellipse':
+      return '50%'
+    case 'roundRect': {
+      const ratio = Math.max(0.05, Math.min(((shape.geometry_adjustments?.adj ?? 16667) / 100000) * 1.8, 0.5))
+      return `${Math.round(ratio * 100)}%`
+    }
+    default:
+      return undefined
+  }
+}
+
+function renderDecoration(shape: Shape) {
+  const fill = shape.fill_color ?? 'none'
+  const stroke = shape.stroke_color ?? 'none'
+  const strokeWidth = svgDecorationStrokeWidth(shape)
+  const viewBoxWidth = shape.svg_viewbox_width ?? shape.width ?? 1
+  const viewBoxHeight = shape.svg_viewbox_height ?? shape.height ?? 1
+  const borderRadius = decorationBorderRadius(shape)
+
+  if (shape.svg_path) {
+    return (
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        preserveAspectRatio="none"
+        style={{ display: 'block', overflow: 'visible' }}
+      >
+        <path d={shape.svg_path} fill={fill} stroke={stroke} strokeWidth={strokeWidth} vectorEffect="non-scaling-stroke" />
+      </svg>
+    )
+  }
+
+  if (shape.preset_geometry === 'straightConnector1' || shape.preset_geometry === 'line') {
+    return (
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        preserveAspectRatio="none"
+        style={{ display: 'block', overflow: 'visible' }}
+      >
+        <line
+          x1={0}
+          y1={viewBoxHeight / 2}
+          x2={viewBoxWidth}
+          y2={viewBoxHeight / 2}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          vectorEffect="non-scaling-stroke"
+          strokeLinecap="square"
+        />
+      </svg>
+    )
+  }
+
+  if (shape.preset_geometry === 'rtTriangle') {
+    return (
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        preserveAspectRatio="none"
+        style={{ display: 'block', overflow: 'visible' }}
+      >
+        <path
+          d={`M 0 0 L ${viewBoxWidth} ${viewBoxHeight} L 0 ${viewBoxHeight} Z`}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    )
+  }
+
+  if (shape.preset_geometry === 'corner') {
+    const ratio = Math.max(0.12, Math.min((shape.geometry_adjustments?.adj1 ?? 25000) / 100000, 0.45))
+    const t = Math.max(Math.min(viewBoxWidth, viewBoxHeight) * ratio, 1)
+    return (
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        preserveAspectRatio="none"
+        style={{ display: 'block', overflow: 'visible' }}
+      >
+        <path
+          d={`M 0 0 H ${viewBoxWidth} V ${t} H ${t} V ${viewBoxHeight} H 0 Z`}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    )
+  }
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        backgroundColor: shape.fill_color ?? undefined,
+        backgroundImage: shape.fill_gradient && shape.fill_gradient.includes('gradient(') ? shape.fill_gradient : undefined,
+        border: shape.stroke_color
+          ? `${Math.max((shape.stroke_width ?? 12700) / 12700, 1)}px solid ${shape.stroke_color}`
+          : undefined,
+        borderRadius,
+      }}
+    />
+  )
 }
 
 /** Place the text caret at the given viewport coordinates (cross-browser). */
@@ -1291,11 +1424,13 @@ export default function DocumentPreview({
                 slide.shapes.map((shape, pos) => {
                   const isImage = shape.shape_type === 'image'
                   const isTable = shape.shape_type === 'table'
-                  const isInteractive = !isImage && !isTable
+                  const isDecoration = shape.shape_type === 'decoration'
+                  const isInteractive = !isImage && !isTable && !isDecoration
                   const isSelected = isInteractive && !isManual && selectedIndices.includes(shape.index)
                   const isEditing = isInteractive && editing?.index === shape.index
                   const isTableSelected = isTable && !isManual && selectedTable === shape.index
                   const resolvedImageSrc = isImage ? resolvePreviewImageSrc(shape.image_src) : undefined
+                  const transform = shapeTransform(shape)
                   const justify =
                     shape.vertical_anchor === 'middle' ? 'center'
                     : shape.vertical_anchor === 'bottom' ? 'flex-end'
@@ -1312,6 +1447,11 @@ export default function DocumentPreview({
                         width: shape.width / 12700,
                         height: shape.height / 12700,
                         boxSizing: 'border-box',
+                        transform,
+                        transformOrigin: 'center center',
+                        ...(isDecoration ? {
+                          pointerEvents: 'none',
+                        } : {}),
                         ...(isTable ? {
                           cursor: isManual ? 'text' : 'pointer',
                           backgroundColor: isTableSelected ? 'rgba(219,234,254,0.35)' : undefined,
@@ -1424,7 +1564,7 @@ export default function DocumentPreview({
                         manualShapeElementRef.current = el
                       } : undefined}
                     >
-                      {isImage && resolvedImageSrc ? (
+                      {isDecoration ? renderDecoration(shape) : isImage && resolvedImageSrc ? (
                         <img
                           src={resolvedImageSrc}
                           draggable={false}
@@ -1492,10 +1632,15 @@ export default function DocumentPreview({
                             key={pi}
                             style={{
                               margin: 0,
+                              marginBottom: pi < shape.paragraphs.length - 1 ? (para.bullet ? '0.35em' : '0.18em') : 0,
                               padding: 0,
                               lineHeight: 1.25,
                               textAlign: (para.align ?? 'left') as React.CSSProperties['textAlign'],
                               minHeight: '1em',
+                              display: para.bullet && !(isManual && isEditing) ? 'list-item' : undefined,
+                              listStyleType: para.bullet && !(isManual && isEditing) ? 'disc' : undefined,
+                              listStylePosition: para.bullet && !(isManual && isEditing) ? 'outside' : undefined,
+                              marginLeft: para.bullet && !(isManual && isEditing) ? `${1.2 + (para.level ?? 0) * 1.1}em` : undefined,
                             }}
                           >
                             {para.runs.map((run, ri) => (

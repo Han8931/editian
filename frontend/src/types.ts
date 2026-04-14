@@ -29,6 +29,8 @@ export interface SlideParagraph {
   text: string
   align?: ParagraphAlign
   runs: TextRun[]
+  bullet?: boolean
+  level?: number
 }
 
 export interface TableCell {
@@ -39,7 +41,7 @@ export interface TableCell {
 export interface Shape {
   index: number
   name: string
-  shape_type: 'text' | 'image' | 'table'
+  shape_type: 'text' | 'image' | 'table' | 'decoration'
   text: string
   left: number               // EMU
   top: number                // EMU
@@ -47,6 +49,17 @@ export interface Shape {
   height: number             // EMU
   paragraphs: SlideParagraph[]
   fill_color?: string | null
+  fill_gradient?: string | null
+  stroke_color?: string | null
+  stroke_width?: number | null
+  rotation?: number
+  flip_horizontal?: boolean
+  flip_vertical?: boolean
+  preset_geometry?: string | null
+  geometry_adjustments?: Record<string, number> | null
+  svg_path?: string | null
+  svg_viewbox_width?: number | null
+  svg_viewbox_height?: number | null
   ph_idx?: number | null     // 0 = title, 1 = body/subtitle
   vertical_anchor?: string   // 'top' | 'middle' | 'bottom'
   image_src?: string | null  // image URL or data URL for image shapes

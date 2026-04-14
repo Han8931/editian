@@ -164,7 +164,6 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - An LLM: [Ollama](https://ollama.com) running locally, or an OpenAI API key
 
 
-
 # Todos
 
 - Support other languages

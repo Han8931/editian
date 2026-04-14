@@ -97,6 +97,7 @@ def _apply_clr_mods(hex_color: str, clr_el) -> str:
     g = int(h_str[2:4], 16) / 255
     b = int(h_str[4:6], 16) / 255
     h, lum, s = colorsys.rgb_to_hls(r, g, b)
+    alpha = 1.0
 
     for child in clr_el:
         tag = child.tag.split('}')[-1]
@@ -110,12 +111,24 @@ def _apply_clr_mods(hex_color: str, clr_el) -> str:
                 lum = lum * val
             elif tag == 'tint':
                 lum = lum + (1 - lum) * val
+            elif tag == 'alpha':
+                alpha = val
+            elif tag == 'alphaMod':
+                alpha = alpha * val
+            elif tag == 'alphaOff':
+                alpha = alpha + val
         except Exception:
             pass
 
     lum = max(0.0, min(1.0, lum))
+    alpha = max(0.0, min(1.0, alpha))
     r2, g2, b2 = colorsys.hls_to_rgb(h, lum, s)
-    return f'#{int(r2 * 255):02X}{int(g2 * 255):02X}{int(b2 * 255):02X}'
+    r_i = int(r2 * 255)
+    g_i = int(g2 * 255)
+    b_i = int(b2 * 255)
+    if alpha >= 0.999:
+        return f'#{r_i:02X}{g_i:02X}{b_i:02X}'
+    return f'rgba({r_i}, {g_i}, {b_i}, {alpha:.3f})'
 
 
 def _resolve_clr_element(clr_el) -> Optional[str]:
@@ -126,7 +139,7 @@ def _resolve_clr_element(clr_el) -> Optional[str]:
 
     if tag == 'srgbClr':
         val = clr_el.get('val', '')
-        return f'#{val.upper()}' if val else None
+        return _apply_clr_mods(f'#{val.upper()}', clr_el) if val else None
 
     elif tag == 'schemeClr':
         scheme = clr_el.get('val', '')
@@ -137,11 +150,12 @@ def _resolve_clr_element(clr_el) -> Optional[str]:
 
     elif tag == 'prstClr':
         name = clr_el.get('val', '')
-        return _PRESET_COLORS.get(name)
+        base = _PRESET_COLORS.get(name)
+        return _apply_clr_mods(base, clr_el) if base else None
 
     elif tag == 'sysClr':
         last = clr_el.get('lastClr', '')
-        return f'#{last.upper()}' if last else None
+        return _apply_clr_mods(f'#{last.upper()}', clr_el) if last else None
 
     return None
 
@@ -214,6 +228,281 @@ def _shape_fill_hex(shape) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def _gradient_fill_css(fill_parent) -> Optional[str]:
+    if fill_parent is None:
+        return None
+
+    grad = fill_parent.find(qn('a:gradFill'))
+    if grad is None:
+        return None
+
+    stops_parent = grad.find(qn('a:gsLst'))
+    if stops_parent is None:
+        return None
+
+    stops: list[tuple[float, str]] = []
+    for stop in stops_parent:
+        try:
+            pos = int(stop.get('pos', '0')) / 1000
+        except Exception:
+            pos = 0.0
+        color = None
+        for child in stop:
+            color = _resolve_clr_element(child)
+            if color:
+                break
+        if color:
+            stops.append((max(0.0, min(100.0, pos)), color))
+
+    if not stops:
+        return None
+
+    # Degenerate gradients are visually just a solid fill.
+    if len({color for _, color in stops}) == 1:
+        return stops[0][1]
+
+    linear = grad.find(qn('a:lin'))
+    if linear is not None:
+        try:
+            angle = int(linear.get('ang', '0')) / 60000
+        except Exception:
+            angle = 0
+        stop_list = ", ".join(f"{color} {pos:.0f}%" for pos, color in stops)
+        return f"linear-gradient({angle:.2f}deg, {stop_list})"
+
+    path = grad.find(qn('a:path'))
+    if path is not None:
+        stop_list = ", ".join(f"{color} {pos:.0f}%" for pos, color in stops)
+        return f"radial-gradient(circle, {stop_list})"
+
+    stop_list = ", ".join(f"{color} {pos:.0f}%" for pos, color in stops)
+    return f"linear-gradient(0deg, {stop_list})"
+
+
+def _shape_fill_gradient(shape) -> Optional[str]:
+    try:
+        spPr = _shape_sp_pr(shape)
+        if spPr is not None:
+            return _gradient_fill_css(spPr)
+    except Exception:
+        pass
+    return None
+
+
+def _shape_line_hex(shape) -> Optional[str]:
+    try:
+        return _color_hex(shape.line.color)
+    except Exception:
+        pass
+    try:
+        ln = shape._element.find('.//' + qn('a:ln'))
+        if ln is not None:
+            return _solid_fill_hex(ln)
+    except Exception:
+        pass
+    return None
+
+
+def _shape_line_width(shape) -> Optional[int]:
+    try:
+        width = shape.line.width
+        return int(width) if width is not None else None
+    except Exception:
+        pass
+    try:
+        ln = shape._element.find('.//' + qn('a:ln'))
+        if ln is not None and ln.get('w'):
+            return int(ln.get('w'))
+    except Exception:
+        pass
+    return None
+
+
+def _shape_sp_pr(shape):
+    try:
+        spPr = shape._element.find(qn('p:spPr'))
+        if spPr is None:
+            spPr = shape._element.find('.//' + qn('p:spPr'))
+        return spPr
+    except Exception:
+        return None
+
+
+def _shape_transform(shape) -> dict[str, Any]:
+    rotation = 0.0
+    flip_horizontal = False
+    flip_vertical = False
+    try:
+        spPr = _shape_sp_pr(shape)
+        xfrm = None if spPr is None else spPr.find(qn('a:xfrm'))
+        if xfrm is not None:
+            if xfrm.get('rot'):
+                rotation = int(xfrm.get('rot', '0')) / 60000
+            flip_horizontal = xfrm.get('flipH') == '1'
+            flip_vertical = xfrm.get('flipV') == '1'
+    except Exception:
+        pass
+    return {
+        "rotation": rotation,
+        "flip_horizontal": flip_horizontal,
+        "flip_vertical": flip_vertical,
+    }
+
+
+def _shape_preset_geometry(shape) -> Optional[str]:
+    try:
+        spPr = _shape_sp_pr(shape)
+        geom = None if spPr is None else spPr.find(qn('a:prstGeom'))
+        if geom is not None:
+            return geom.get('prst')
+    except Exception:
+        pass
+    return None
+
+
+def _geom_env(width: int, height: int) -> dict[str, int]:
+    env = {
+        'w': width,
+        'h': height,
+        'l': 0,
+        't': 0,
+        'r': width,
+        'b': height,
+        'wd2': width // 2,
+        'wd4': width // 4,
+        'hd2': height // 2,
+        'hd4': height // 4,
+        'hc': width // 2,
+        'vc': height // 2,
+        'ss': min(width, height),
+        'ls': max(width, height),
+    }
+    return env
+
+
+def _geom_value(token: str, env: dict[str, int]) -> int:
+    try:
+        return int(token)
+    except Exception:
+        return env.get(token, 0)
+
+
+def _eval_geom_formula(formula: str, env: dict[str, int]) -> int:
+    parts = formula.split()
+    if not parts:
+        return 0
+    op = parts[0]
+    args = parts[1:]
+
+    try:
+        if op == 'val' and len(args) >= 1:
+            return _geom_value(args[0], env)
+        if op == '*/' and len(args) >= 3:
+            a, b, c = (_geom_value(arg, env) for arg in args[:3])
+            return int(round((a * b) / c)) if c else 0
+        if op == '+-' and len(args) >= 3:
+            a, b, c = (_geom_value(arg, env) for arg in args[:3])
+            return a + b - c
+        if op == '+/' and len(args) >= 3:
+            a, b, c = (_geom_value(arg, env) for arg in args[:3])
+            return int(round((a + b) / c)) if c else 0
+        if op == 'max' and len(args) >= 2:
+            return max(_geom_value(args[0], env), _geom_value(args[1], env))
+        if op == 'min' and len(args) >= 2:
+            return min(_geom_value(args[0], env), _geom_value(args[1], env))
+    except Exception:
+        return 0
+
+    return _geom_value(args[0], env) if args else 0
+
+
+def _shape_geometry_adjustments(shape) -> Optional[dict[str, int]]:
+    try:
+        spPr = _shape_sp_pr(shape)
+        prst_geom = None if spPr is None else spPr.find(qn('a:prstGeom'))
+        if prst_geom is None:
+            return None
+        avLst = prst_geom.find(qn('a:avLst'))
+        if avLst is None:
+            return None
+        env = _geom_env(100000, 100000)
+        adjustments: dict[str, int] = {}
+        for gd in avLst:
+            name = gd.get('name')
+            formula = gd.get('fmla', '')
+            if not name or not formula:
+                continue
+            value = _eval_geom_formula(formula, env)
+            env[name] = value
+            adjustments[name] = value
+        return adjustments or None
+    except Exception:
+        return None
+
+
+def _shape_svg_path(shape) -> tuple[Optional[str], Optional[int], Optional[int]]:
+    try:
+        spPr = _shape_sp_pr(shape)
+        cust_geom = None if spPr is None else spPr.find(qn('a:custGeom'))
+        if cust_geom is None:
+            return None, None, None
+
+        shape_width = int(shape.width or 0) or 1
+        shape_height = int(shape.height or 0) or 1
+
+        gdLst = cust_geom.find(qn('a:gdLst'))
+        path_lst = cust_geom.find(qn('a:pathLst'))
+        if path_lst is None:
+            return None, None, None
+
+        path_segments: list[str] = []
+        for path in path_lst:
+            path_width = int(path.get('w', str(shape_width)) or shape_width)
+            path_height = int(path.get('h', str(shape_height)) or shape_height)
+            env = _geom_env(path_width, path_height)
+
+            if gdLst is not None:
+                for gd in gdLst:
+                    name = gd.get('name')
+                    formula = gd.get('fmla', '')
+                    if not name or not formula:
+                        continue
+                    env[name] = _eval_geom_formula(formula, env)
+
+            def scale_x(raw: str) -> float:
+                return (_geom_value(raw, env) * shape_width) / path_width if path_width else 0.0
+
+            def scale_y(raw: str) -> float:
+                return (_geom_value(raw, env) * shape_height) / path_height if path_height else 0.0
+
+            for cmd in path:
+                tag = cmd.tag.split('}')[-1]
+                if tag in {'moveTo', 'lnTo'}:
+                    pt = cmd.find(qn('a:pt'))
+                    if pt is None:
+                        continue
+                    x = scale_x(pt.get('x', '0'))
+                    y = scale_y(pt.get('y', '0'))
+                    path_segments.append(f"{'M' if tag == 'moveTo' else 'L'} {x:.2f} {y:.2f}")
+                elif tag == 'cubicBezTo':
+                    pts = cmd.findall(qn('a:pt'))
+                    if len(pts) != 3:
+                        continue
+                    p = [(scale_x(pt.get('x', '0')), scale_y(pt.get('y', '0'))) for pt in pts]
+                    path_segments.append(
+                        f"C {p[0][0]:.2f} {p[0][1]:.2f} {p[1][0]:.2f} {p[1][1]:.2f} {p[2][0]:.2f} {p[2][1]:.2f}"
+                    )
+                elif tag == 'close':
+                    path_segments.append('Z')
+
+        if not path_segments:
+            return None, None, None
+
+        return " ".join(path_segments), shape_width, shape_height
+    except Exception:
+        return None, None, None
 
 
 # ── Image extraction ──────────────────────────────────────────────────────────
@@ -424,12 +713,14 @@ def _geometry(
     child_origin_x: int = 0,
     child_origin_y: int = 0,
 ) -> dict:
-    return {
+    geometry = {
         "left":   _scaled_emu((shape.left  or 0) - child_origin_x, scale_x) + int(round(left_offset)),
         "top":    _scaled_emu((shape.top   or 0) - child_origin_y, scale_y) + int(round(top_offset)),
         "width":  _scaled_emu(shape.width  or 0, scale_x),
         "height": _scaled_emu(shape.height or 0, scale_y),
     }
+    geometry.update(_shape_transform(shape))
+    return geometry
 
 
 def _image_dict(
@@ -465,6 +756,59 @@ def _image_dict(
     }
 
 
+def _decoration_dict(
+    shape,
+    idx: int,
+    left_offset: float,
+    top_offset: float,
+    scale_x: float = 1.0,
+    scale_y: float = 1.0,
+    child_origin_x: int = 0,
+    child_origin_y: int = 0,
+) -> Optional[dict]:
+    fill_color = _shape_fill_hex(shape)
+    fill_gradient = _shape_fill_gradient(shape)
+    if not fill_color and fill_gradient and 'gradient(' not in fill_gradient:
+        fill_color = fill_gradient
+        fill_gradient = None
+    stroke_color = _shape_line_hex(shape)
+    stroke_width = _shape_line_width(shape)
+    preset_geometry = _shape_preset_geometry(shape)
+    svg_path, svg_viewbox_width, svg_viewbox_height = _shape_svg_path(shape)
+    geometry_adjustments = _shape_geometry_adjustments(shape)
+    if not fill_color and not fill_gradient and not stroke_color:
+        return None
+
+    return {
+        "index": idx,
+        "name": shape.name,
+        "shape_type": "decoration",
+        "text": "",
+        "image_src": None,
+        "paragraphs": [],
+        "fill_color": fill_color,
+        "fill_gradient": fill_gradient,
+        "stroke_color": stroke_color,
+        "stroke_width": stroke_width,
+        "preset_geometry": preset_geometry,
+        "geometry_adjustments": geometry_adjustments,
+        "svg_path": svg_path,
+        "svg_viewbox_width": svg_viewbox_width,
+        "svg_viewbox_height": svg_viewbox_height,
+        "ph_idx": None,
+        "vertical_anchor": "top",
+        **_geometry(
+            shape,
+            left_offset,
+            top_offset,
+            scale_x,
+            scale_y,
+            child_origin_x,
+            child_origin_y,
+        ),
+    }
+
+
 # ── Text extraction ───────────────────────────────────────────────────────────
 
 _ALIGN_MAP = {
@@ -478,6 +822,20 @@ _ANCHOR_MAP = {
     MSO_ANCHOR.MIDDLE: "middle",
     MSO_ANCHOR.BOTTOM: "bottom",
 }
+
+
+def _paragraph_has_bullet(para) -> bool:
+    try:
+        pPr = para._p.pPr
+        if pPr is None:
+            return False
+        for child in pPr:
+            tag = getattr(child, "tag", "")
+            if tag in (qn('a:buChar'), qn('a:buAutoNum')):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _text_dict(shape, idx: int) -> Optional[dict]:
@@ -535,6 +893,8 @@ def _text_dict(shape, idx: int) -> Optional[dict]:
             "text":  para_text,
             "align": align,
             "runs":  runs,
+            "bullet": _paragraph_has_bullet(para),
+            "level": getattr(para, "level", 0) or 0,
         })
 
     full_text = "\n".join(p["text"] for p in paragraphs)
@@ -561,6 +921,9 @@ def _text_dict(shape, idx: int) -> Optional[dict]:
         "text": full_text,
         "paragraphs": paragraphs,
         "fill_color": _shape_fill_hex(shape),
+        "fill_gradient": _shape_fill_gradient(shape),
+        "stroke_color": _shape_line_hex(shape),
+        "stroke_width": _shape_line_width(shape),
         "ph_idx": ph_idx,
         "vertical_anchor": vertical_anchor,
         "image_src": None,
@@ -848,6 +1211,10 @@ def _parse_shape_inner(
             return [result]
         return []
 
+    decoration = _decoration_dict(shape, idx, left_offset, top_offset, scale_x, scale_y, child_origin_x, child_origin_y)
+    if decoration:
+        return [decoration]
+
     # ── Any shape with a blip (picture) fill ──────────────────────────────────
     # Covers picture placeholders, rectangles with image fill, etc.
     src = _blip_image_src(shape._element, part, asset_resolver)
@@ -918,6 +1285,58 @@ def _background_sources(slide) -> list[tuple[Any, Any]]:
     except Exception:
         pass
     return sources
+
+
+def _parse_inherited_visuals(
+    slide,
+    asset_resolver: Optional[Callable[[bytes, Optional[str], Optional[str]], str]] = None,
+) -> list[dict]:
+    visuals: list[dict] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    try:
+        inherited_sources = [
+            (slide.slide_layout.slide_master.shapes, slide.slide_layout.slide_master.part, 1_000_000),
+            (slide.slide_layout.shapes, slide.slide_layout.part, 2_000_000),
+        ]
+    except Exception:
+        return visuals
+
+    for shape_collection, part, idx_offset in inherited_sources:
+        try:
+            parsed = _parse_shape_collection(shape_collection, part, asset_resolver, idx_offset=idx_offset)
+        except Exception:
+            continue
+
+        for shape in parsed:
+            if shape["shape_type"] not in {"image", "decoration"}:
+                continue
+
+            try:
+                original_idx = shape["index"] - idx_offset
+                source_shape = shape_collection[original_idx]
+                if getattr(source_shape, "is_placeholder", False):
+                    continue
+            except Exception:
+                pass
+
+            key = (
+                shape["shape_type"],
+                shape.get("name"),
+                shape.get("left"),
+                shape.get("top"),
+                shape.get("width"),
+                shape.get("height"),
+                shape.get("image_src"),
+                shape.get("fill_color"),
+                shape.get("stroke_color"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            visuals.append(shape)
+
+    return visuals
 
 
 def _looks_like_slide_background(shape: dict, slide_width: int, slide_height: int) -> bool:
@@ -1052,6 +1471,10 @@ def parse_pptx(
             background_image_src = None
 
         shapes = []
+        try:
+            shapes.extend(_parse_inherited_visuals(slide, asset_resolver))
+        except Exception:
+            pass
         try:
             shapes.extend(_parse_shape_collection(slide.shapes, slide.part, asset_resolver))
         except Exception:
