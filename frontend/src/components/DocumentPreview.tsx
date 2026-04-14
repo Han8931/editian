@@ -6,11 +6,15 @@ import {
   AlignRight,
   Bold,
   ChevronDown,
+  Copy,
   Italic,
+  List,
+  Plus,
   Redo2,
   Save,
   Strikethrough,
   Table2,
+  Trash2,
   Underline,
   Undo2,
 } from 'lucide-react'
@@ -545,6 +549,37 @@ export default function DocumentPreview({
     }
   }
 
+  function insertSlide() {
+    onDirectEdit?.({
+      scope: { type: 'insert_slide', slide_index: currentSlide },
+      original: '',
+      revised: '',
+    })
+    // Navigate to the newly inserted slide
+    onSlideChange(currentSlide + 1)
+  }
+
+  function deleteSlide() {
+    const pptx = doc.structure as import('../types').PptxStructure
+    if (pptx.slides.length <= 1) return
+    onDirectEdit?.({
+      scope: { type: 'delete_slide', slide_index: currentSlide },
+      original: '',
+      revised: '',
+    })
+    onSlideChange(Math.max(0, currentSlide - 1))
+    onSelectionChange([])
+  }
+
+  function duplicateSlide() {
+    onDirectEdit?.({
+      scope: { type: 'duplicate_slide', slide_index: currentSlide },
+      original: '',
+      revised: '',
+    })
+    onSlideChange(currentSlide + 1)
+  }
+
   function insertTable(rows: number, cols: number) {
     setShowTablePicker(false)
     setTablePickerPos(null)
@@ -718,6 +753,21 @@ export default function DocumentPreview({
             </button>
           </div>
 
+          <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+            <button
+              onMouseDown={(e) => {
+                e.preventDefault()
+                withActiveEditor(() => {
+                  document.execCommand('insertUnorderedList', false, undefined)
+                })
+              }}
+              title="Bullet list"
+              className={toolButtonClass}
+            >
+              <List size={15} />
+            </button>
+          </div>
+
           {doc.file_type === 'docx' && (
             <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
               <button
@@ -738,6 +788,33 @@ export default function DocumentPreview({
                 className={toolButtonClass}
               >
                 <Table2 size={15} />
+              </button>
+            </div>
+          )}
+
+          {doc.file_type === 'pptx' && (
+            <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+              <button
+                onMouseDown={(e) => { e.preventDefault(); insertSlide() }}
+                title="Insert slide after"
+                className={toolButtonClass}
+              >
+                <Plus size={15} />
+              </button>
+              <button
+                onMouseDown={(e) => { e.preventDefault(); duplicateSlide() }}
+                title="Duplicate slide"
+                className={toolButtonClass}
+              >
+                <Copy size={15} />
+              </button>
+              <button
+                onMouseDown={(e) => { e.preventDefault(); deleteSlide() }}
+                title="Delete slide"
+                className={`${toolButtonClass} hover:text-red-500`}
+                disabled={(doc.structure as import('../types').PptxStructure).slides.length <= 1}
+              >
+                <Trash2 size={15} />
               </button>
             </div>
           )}
@@ -946,13 +1023,13 @@ export default function DocumentPreview({
   function saveEdit() {
     if (!editing) return
     const revisedText = (
-      isManual && doc.file_type === 'pptx' && !editing.cellRef
+      isManual && doc.file_type === 'pptx'
         ? manualShapeElementRef.current?.innerText ?? manualShapeDraftRef.current ?? editing.text
         : editing.text
     ).trim()
     const originalText = editing.original.trim()
     const formatting: CapturedFormatting = (
-      isManual && doc.file_type === 'pptx' && !editing.cellRef && manualShapeElementRef.current
+      isManual && doc.file_type === 'pptx' && manualShapeElementRef.current
         ? captureFormatting(manualShapeElementRef.current)
         : {}
     )
@@ -960,12 +1037,20 @@ export default function DocumentPreview({
     if (revisedText !== originalText || formattingChanged(editing.originalFormatting, formatting)) {
       let scope: Revision['scope']
       if (editing.cellRef) {
-        scope = {
-          type: 'table_cell',
-          table_index: editing.cellRef.t,
-          row_index: editing.cellRef.r,
-          cell_index: editing.cellRef.c,
-        }
+        scope = doc.file_type === 'pptx'
+          ? {
+              type: 'table_cell',
+              slide_index: currentSlide,
+              table_index: editing.cellRef.t,
+              row_index: editing.cellRef.r,
+              cell_index: editing.cellRef.c,
+            }
+          : {
+              type: 'table_cell',
+              table_index: editing.cellRef.t,
+              row_index: editing.cellRef.r,
+              cell_index: editing.cellRef.c,
+            }
       } else if (doc.file_type === 'docx') {
         scope = { type: 'paragraphs', paragraph_indices: [editing.index] }
       } else {
@@ -1209,6 +1294,7 @@ export default function DocumentPreview({
                   const isInteractive = !isImage && !isTable
                   const isSelected = isInteractive && !isManual && selectedIndices.includes(shape.index)
                   const isEditing = isInteractive && editing?.index === shape.index
+                  const isTableSelected = isTable && !isManual && selectedTable === shape.index
                   const resolvedImageSrc = isImage ? resolvePreviewImageSrc(shape.image_src) : undefined
                   const justify =
                     shape.vertical_anchor === 'middle' ? 'center'
@@ -1226,6 +1312,12 @@ export default function DocumentPreview({
                         width: shape.width / 12700,
                         height: shape.height / 12700,
                         boxSizing: 'border-box',
+                        ...(isTable ? {
+                          cursor: isManual ? 'text' : 'pointer',
+                          backgroundColor: isTableSelected ? 'rgba(219,234,254,0.35)' : undefined,
+                          outline: isTableSelected ? '2px solid #93c5fd' : undefined,
+                          outlineOffset: 1,
+                        } : {}),
                         ...(isInteractive ? {
                           padding: '4px 8px',
                           cursor: isManual ? 'text' : 'pointer',
@@ -1245,7 +1337,36 @@ export default function DocumentPreview({
                           outlineOffset: 1,
                         } : {}),
                       }}
-                      onMouseDown={isInteractive ? (e) => {
+                      onMouseDown={isTable ? (e) => {
+                        const cellEl = (e.target as Element).closest('[data-pptx-cell-ref]') as HTMLElement | null
+                        if (isManual) {
+                          if (!cellEl) return
+                          const ref = cellEl.getAttribute('data-pptx-cell-ref')?.match(/t(\d+)r(\d+)c(\d+)/)
+                          if (!ref) return
+                          const [, tableRef, rowRef, cellRef] = ref
+                          const sameCell = editing?.cellRef
+                            && editing.index === shape.index
+                            && editing.cellRef.t === Number(tableRef)
+                            && editing.cellRef.r === Number(rowRef)
+                            && editing.cellRef.c === Number(cellRef)
+                          if (!sameCell) {
+                            manualShapeDraftRef.current = cellEl.innerText
+                            setHasPendingEdit(false)
+                            setManualEditorActive(true)
+                            setEditing({
+                              index: shape.index,
+                              original: cellEl.innerText,
+                              text: cellEl.innerText,
+                              originalFormatting: captureFormatting(cellEl),
+                              cellRef: { t: Number(tableRef), r: Number(rowRef), c: Number(cellRef) },
+                            })
+                            onSelectionChange([])
+                            onTableSelect?.(null)
+                          }
+                          return
+                        }
+                        onTableSelect?.(selectedTable === shape.index ? null : shape.index)
+                      } : isInteractive ? (e) => {
                         if (isManual) {
                           // In manual mode: single click enters edit mode
                           if (!isEditing) {
@@ -1317,6 +1438,35 @@ export default function DocumentPreview({
                                 {row.map((cell, ci) => (
                                   <td
                                     key={ci}
+                                    data-pptx-cell-ref={`t${shape.index}r${ri}c${ci}`}
+                                    contentEditable={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? true : undefined}
+                                    suppressContentEditableWarning={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci}
+                                    onBlur={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (e) => {
+                                      if (toolbarInteractionRef.current) return
+                                      manualShapeElementRef.current = e.currentTarget
+                                      manualShapeDraftRef.current = e.currentTarget.innerText
+                                      saveEdit()
+                                    } : undefined}
+                                    onInput={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (e) => {
+                                      manualShapeElementRef.current = e.currentTarget
+                                      manualShapeDraftRef.current = e.currentTarget.innerText
+                                      setHasPendingEdit(true)
+                                    } : undefined}
+                                    onKeyDown={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (e) => {
+                                      handleManualHistoryShortcut(e)
+                                      if (e.defaultPrevented) return
+                                      if (e.key === 'Escape') {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        cancelEdit()
+                                      } else if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
+                                        e.preventDefault()
+                                        saveEdit()
+                                      }
+                                    } : undefined}
+                                    ref={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (el) => {
+                                      manualShapeElementRef.current = el
+                                    } : undefined}
                                     style={{
                                       border: '1px solid #aaa',
                                       padding: '2px 6px',
@@ -1326,6 +1476,7 @@ export default function DocumentPreview({
                                       overflow: 'hidden',
                                       whiteSpace: 'pre-wrap',
                                       wordBreak: 'break-word',
+                                      outline: !isManual && isTableSelected ? '1px solid #93c5fd' : undefined,
                                     }}
                                   >
                                     {cell.text}

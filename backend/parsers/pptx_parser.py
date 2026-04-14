@@ -684,13 +684,16 @@ def _parse_table_shape(shape, idx: int) -> Optional[dict]:
     try:
         tbl = shape.table
         rows_data = []
+        text_lines = []
         for row in tbl.rows:
             cells = []
+            row_texts = []
             for cell in row.cells:
                 try:
                     text = cell.text or ''
                 except Exception:
                     text = ''
+                row_texts.append(text.strip())
                 try:
                     # Try XML-based extraction first (handles scheme/preset colors)
                     tcPr = cell._tc.find(qn('a:tcPr'))
@@ -699,11 +702,13 @@ def _parse_table_shape(shape, idx: int) -> Optional[dict]:
                     fill = None
                 cells.append({'text': text, 'fill': fill})
             rows_data.append(cells)
+            if any(row_texts):
+                text_lines.append(" | ".join(row_texts))
         return {
             'index': idx,
             'name': shape.name,
             'shape_type': 'table',
-            'text': '',
+            'text': "\n".join(text_lines),
             'paragraphs': [],
             'fill_color': None,
             'ph_idx': None,
@@ -971,6 +976,57 @@ def _resolve_background_color(slide) -> Optional[str]:
         except Exception:
             pass
     return None
+
+
+def get_pptx_table_cells(file_path: str, slide_index: int, table_index: int) -> list[dict]:
+    prs = Presentation(file_path)
+    if slide_index < 0 or slide_index >= len(prs.slides):
+        return []
+
+    slide = prs.slides[slide_index]
+    if table_index < 0 or table_index >= len(slide.shapes):
+        return []
+
+    shape = slide.shapes[table_index]
+    if not getattr(shape, "has_table", False):
+        return []
+
+    cells: list[dict] = []
+    for row_idx, row in enumerate(shape.table.rows):
+        for cell_idx, cell in enumerate(row.cells):
+            text = (getattr(cell, "text", "") or "").strip()
+            cells.append({"row": row_idx, "col": cell_idx, "text": text})
+    return cells
+
+
+def get_pptx_cell_text(
+    file_path: str,
+    slide_index: int,
+    table_index: int,
+    row_index: int,
+    cell_index: int,
+) -> str | None:
+    prs = Presentation(file_path)
+    if slide_index < 0 or slide_index >= len(prs.slides):
+        return None
+
+    slide = prs.slides[slide_index]
+    if table_index < 0 or table_index >= len(slide.shapes):
+        return None
+
+    shape = slide.shapes[table_index]
+    if not getattr(shape, "has_table", False):
+        return None
+
+    table = shape.table
+    if row_index < 0 or row_index >= len(table.rows):
+        return None
+
+    row = table.rows[row_index]
+    if cell_index < 0 or cell_index >= len(row.cells):
+        return None
+
+    return getattr(row.cells[cell_index], "text", None)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

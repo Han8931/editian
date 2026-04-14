@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from parsers.docx_parser import parse_docx, get_docx_html, get_cell_text, get_table_cells
-from parsers.pptx_parser import parse_pptx
+from parsers.pptx_parser import parse_pptx, get_pptx_cell_text, get_pptx_table_cells
 from writers.docx_writer import apply_docx_revisions
 from writers.pptx_writer import apply_pptx_revisions
 from llm import run_agent_loop, run_chat
@@ -170,7 +170,7 @@ class LLMConfig(BaseModel):
 
 
 class RevisionScope(BaseModel):
-    type: str  # document | paragraphs | slide | shape | table_cell | insert_table
+    type: str  # document | paragraphs | slide | shape | table_cell | insert_table | insert_slide | delete_slide | duplicate_slide
     paragraph_indices: Optional[list[int]] = None
     slide_index: Optional[int] = None
     shape_indices: Optional[list[int]] = None
@@ -201,6 +201,7 @@ class ApplyRevision(BaseModel):
     italic: Optional[bool] = None
     underline: Optional[bool] = None
     strike: Optional[bool] = None
+    bullet: Optional[bool] = None
 
 
 class ApplyRequest(BaseModel):
@@ -577,6 +578,87 @@ async def _do_revise(req, file_type, file_path, llm):
                             "underline": args.get("underline"),
                             })
 
+        elif req.scope.type == "table_cell":
+            slide_idx = req.scope.slide_index
+            table_index = req.scope.table_index or 0
+            row_index = req.scope.row_index or 0
+            cell_index = req.scope.cell_index or 0
+            if slide_idx is None:
+                raise HTTPException(400, "slide_index is required for PPTX table cell revisions.")
+
+            cell_text = get_pptx_cell_text(file_path, slide_idx, table_index, row_index, cell_index)
+            if cell_text is None:
+                raise HTTPException(404, "PPTX table cell not found.")
+
+            all_cells = get_pptx_table_cells(file_path, slide_idx, table_index)
+            table_context = "\n".join(
+                f"  [context] {c['text']}" if not (c["row"] == row_index and c["col"] == cell_index)
+                else f"  [target] {c['text']}"
+                for c in all_cells if c["text"].strip()
+            )
+            prompt = (
+                f"Table:\n{table_context}\n\n"
+                f"Revise only the [target] cell:\n{cell_text}\n\n"
+                f"Instruction: {req.instruction}"
+            )
+            calls = call_agent(prompt, [_REVISE_TEXT_TOOL])
+            for name, args in calls:
+                if name == "revise_text":
+                    revisions.append({
+                        "scope": {
+                            "type": "table_cell",
+                            "slide_index": slide_idx,
+                            "table_index": table_index,
+                            "row_index": row_index,
+                            "cell_index": cell_index,
+                        },
+                        "original": cell_text,
+                        "revised": args["revised_text"],
+                        "font_name": args.get("font_name"),
+                        "font_size": args.get("font_size"),
+                        "align": args.get("align"),
+                        "bold": args.get("bold"),
+                        "italic": args.get("italic"),
+                        "underline": args.get("underline"),
+                    })
+
+        elif req.scope.type == "table":
+            slide_idx = req.scope.slide_index
+            table_index = req.scope.table_index or 0
+            if slide_idx is None:
+                raise HTTPException(400, "slide_index is required for PPTX table revisions.")
+
+            cells = get_pptx_table_cells(file_path, slide_idx, table_index)
+            if not cells:
+                raise HTTPException(404, "PPTX table not found.")
+
+            cells_text = "\n".join(
+                f"[{c['row']},{c['col']}] {c['text']}" for c in cells if c["text"].strip()
+            )
+            calls = call_agent(f"Table cells:\n{cells_text}\n\nInstruction: {req.instruction}", [_REVISE_CELL_TOOL])
+            cell_map = {(c["row"], c["col"]): c for c in cells}
+            for name, args in calls:
+                if name == "revise_table_cell":
+                    row, col = args["row_index"], args["cell_index"]
+                    if (row, col) in cell_map:
+                        revisions.append({
+                            "scope": {
+                                "type": "table_cell",
+                                "slide_index": slide_idx,
+                                "table_index": table_index,
+                                "row_index": row,
+                                "cell_index": col,
+                            },
+                            "original": cell_map[(row, col)]["text"],
+                            "revised": args["revised_text"],
+                            "font_name": args.get("font_name"),
+                            "font_size": args.get("font_size"),
+                            "align": args.get("align"),
+                            "bold": args.get("bold"),
+                            "italic": args.get("italic"),
+                            "underline": args.get("underline"),
+                        })
+
     return {"revisions": revisions}
 
 
@@ -752,14 +834,27 @@ def _extract_selected_text(
     elif file_type == "pptx":
         structure = parse_pptx(file_path, _pptx_asset_resolver(file_id) if file_id else None)
         slides = structure["slides"]
-        slide_idx = scope.slide_index
-        slide = next((s for s in slides if s["index"] == slide_idx), None)
-        if not slide:
-            return None
-        if scope.type == "shape" and scope.shape_indices:
-            idx_set = set(scope.shape_indices)
-            lines = [sh["text"] for sh in slide["shapes"] if sh["index"] in idx_set and sh["text"].strip()]
-            return "\n\n".join(lines) or None
+        if scope.type in ("shape", "table", "table_cell"):
+            slide_idx = scope.slide_index
+            slide = next((s for s in slides if s["index"] == slide_idx), None)
+            if not slide:
+                return None
+            if scope.type == "shape" and scope.shape_indices:
+                idx_set = set(scope.shape_indices)
+                lines = [sh["text"] for sh in slide["shapes"] if sh["index"] in idx_set and sh["text"].strip()]
+                return "\n\n".join(lines) or None
+            if scope.type == "table":
+                table_index = scope.table_index or 0
+                cells = get_pptx_table_cells(file_path, slide_idx or 0, table_index)
+                return "\n".join(c["text"] for c in cells if c["text"].strip()) or None
+            if scope.type == "table_cell":
+                return get_pptx_cell_text(
+                    file_path,
+                    slide_idx or 0,
+                    scope.table_index or 0,
+                    scope.row_index or 0,
+                    scope.cell_index or 0,
+                ) or None
 
     return None
 

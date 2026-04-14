@@ -240,7 +240,7 @@ export default function App() {
         setWorkspaces((prev) =>
           prev.map((w) =>
             w.id === targetId && w.doc?.file_id === fileId
-              ? { ...w, doc: newDoc, selectedIndices: [] }
+              ? { ...w, doc: newDoc, selectedIndices: [], selectedTable: null }
               : w,
           ),
         )
@@ -526,7 +526,7 @@ export default function App() {
               doc={doc}
               mode={mode}
               currentSlide={active.currentSlide}
-              onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [] })}
+              onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [], selectedTable: null })}
               selectedIndices={active.selectedIndices}
               onSelectionChange={(indices) => patchActive({ selectedIndices: indices, selectedTable: null })}
               selectedTable={active.selectedTable}
@@ -557,7 +557,7 @@ export default function App() {
               <Sidebar
                 doc={doc}
                 currentSlide={active.currentSlide}
-                onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [] })}
+                onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [], selectedTable: null })}
                 onDocumentUpdate={handleDocumentUpdate}
                 selectedIndices={active.selectedIndices}
                 selectedTable={active.selectedTable}

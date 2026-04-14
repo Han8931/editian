@@ -75,7 +75,11 @@ export default function Sidebar({
   }, [chatMessages, chatLoading])
 
   function buildScope(): RevisionScope {
-    if (selectedTable != null) return { type: 'table', table_index: selectedTable }
+    if (selectedTable != null) {
+      return isPptx
+        ? { type: 'table', slide_index: currentSlide, table_index: selectedTable }
+        : { type: 'table', table_index: selectedTable }
+    }
     if (selectedIndices.length === 0) return { type: 'document' }
     if (isPptx) return { type: 'shape', slide_index: currentSlide, shape_indices: selectedIndices }
     return { type: 'paragraphs', paragraph_indices: selectedIndices }

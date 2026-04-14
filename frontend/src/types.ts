@@ -100,7 +100,7 @@ export interface Workspace {
 }
 
 export interface RevisionScope {
-  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table'
+  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table' | 'insert_slide' | 'delete_slide' | 'duplicate_slide'
   paragraph_indices?: number[]
   slide_index?: number
   shape_indices?: number[]
@@ -124,6 +124,7 @@ export interface Revision {
   italic?: boolean | null
   underline?: boolean | null
   strike?: boolean | null
+  bullet?: boolean | null
 }
 
 export interface ReviseResponse {
