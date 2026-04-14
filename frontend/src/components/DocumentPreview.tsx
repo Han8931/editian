@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlignCenter,
   AlignLeft,
@@ -229,6 +230,9 @@ export default function DocumentPreview({
   const toolbarInteractionRef = useRef(false)
   const [showFontSizeMenu, setShowFontSizeMenu] = useState(false)
   const [manualEditorActive, setManualEditorActive] = useState(false)
+  const fontSizeBtnRef = useRef<HTMLButtonElement>(null)
+  const savedRangesRef = useRef<Range[]>([])
+  const [fontSizeMenuPos, setFontSizeMenuPos] = useState<{ top: number; left: number } | null>(null)
 
   // ── Manual mode state ────────────────────────────────────────────────────
   // Tracks the currently-edited DOM element for inline DOCX editing
@@ -266,6 +270,7 @@ export default function DocumentPreview({
     function handlePointerDown(event: MouseEvent) {
       if (toolbarRef.current?.contains(event.target as Node)) return
       setShowFontSizeMenu(false)
+      setFontSizeMenuPos(null)
     }
 
     document.addEventListener('mousedown', handlePointerDown)
@@ -274,6 +279,7 @@ export default function DocumentPreview({
 
   useEffect(() => {
     setShowFontSizeMenu(false)
+    setFontSizeMenuPos(null)
     setManualEditorActive(false)
   }, [doc.file_id, isManual])
 
@@ -531,8 +537,16 @@ export default function DocumentPreview({
       const el = activeManualEditor()
       if (!el) return
       setShowFontSizeMenu(false)
-      run(el)
+      setFontSizeMenuPos(null)
+      // Focus first so execCommand works in Firefox
       el.focus()
+      // Restore saved selection ranges (Firefox loses selection on toolbar click)
+      const sel = window.getSelection()
+      if (sel && savedRangesRef.current.length > 0) {
+        sel.removeAllRanges()
+        savedRangesRef.current.forEach((r) => sel.addRange(r))
+      }
+      run(el)
       setHasPendingEdit(true)
       if (doc.file_type === 'pptx') {
         manualShapeDraftRef.current = el.innerText
@@ -576,10 +590,16 @@ export default function DocumentPreview({
     const toolButtonClass = `${btnBase} hover:bg-white`
 
     return (
+      <>
       <div
         ref={toolbarRef}
         onMouseDownCapture={() => {
           toolbarInteractionRef.current = true
+          // Save selection ranges before the toolbar click can steal focus (needed for Firefox)
+          const sel = window.getSelection()
+          savedRangesRef.current = sel
+            ? Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i).cloneRange())
+            : []
         }}
         onMouseUpCapture={() => {
           requestAnimationFrame(() => {
@@ -592,9 +612,17 @@ export default function DocumentPreview({
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
             <div className="relative">
               <button
+                ref={fontSizeBtnRef}
                 onMouseDown={(e) => {
                   e.preventDefault()
-                  setShowFontSizeMenu((open) => !open)
+                  if (showFontSizeMenu) {
+                    setShowFontSizeMenu(false)
+                    setFontSizeMenuPos(null)
+                  } else {
+                    const rect = fontSizeBtnRef.current?.getBoundingClientRect()
+                    if (rect) setFontSizeMenuPos({ top: rect.bottom + 4, left: rect.left })
+                    setShowFontSizeMenu(true)
+                  }
                 }}
                 title="Font size"
                 className={`${toolButtonClass} min-w-[4.75rem] justify-between bg-white`}
@@ -602,22 +630,6 @@ export default function DocumentPreview({
                 <span className="text-xs font-medium">Size</span>
                 <ChevronDown size={14} />
               </button>
-              {showFontSizeMenu && (
-                <div className="absolute left-0 top-10 z-20 grid min-w-[5rem] grid-cols-1 gap-1 rounded-xl border border-gray-200 bg-white p-1 shadow-lg">
-                  {[10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].map((size) => (
-                    <button
-                      key={size}
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        applyFontSize(size)
-                      }}
-                      className="rounded-lg px-2 py-1.5 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
-                    >
-                      {size} pt
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
             <button
               onMouseDown={(e) => { e.preventDefault(); fmt('bold') }}
@@ -732,6 +744,29 @@ export default function DocumentPreview({
           </button>
         </div>
       </div>
+
+      {/* Font size dropdown — rendered via portal so it's never clipped by overflow:hidden ancestors */}
+      {showFontSizeMenu && fontSizeMenuPos && createPortal(
+        <div
+          style={{ position: 'fixed', top: fontSizeMenuPos.top, left: fontSizeMenuPos.left, zIndex: 9999 }}
+          className="grid min-w-[5rem] grid-cols-1 gap-1 rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
+        >
+          {[10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36].map((size) => (
+            <button
+              key={size}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                applyFontSize(size)
+              }}
+              className="rounded-lg px-2 py-1.5 text-left text-xs text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              {size} pt
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
     )
   }
 
