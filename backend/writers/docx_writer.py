@@ -3,6 +3,8 @@ from typing import Any
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 
 _ALIGN_MAP = {
@@ -47,6 +49,12 @@ def apply_docx_revisions(
                 if idx < len(doc.paragraphs):
                     _set_paragraph_text(doc.paragraphs[idx], revised_text, font_name, font_size, align, bold, italic, underline, strike)
 
+        elif scope["type"] == "insert_table":
+            rows = scope.get("rows") or 2
+            cols = scope.get("cols") or 2
+            para_index = scope.get("paragraph_index", -1)
+            _insert_table(doc, para_index, rows, cols)
+
         elif scope["type"] == "table_cell":
             table_index = scope.get("table_index", 0)
             row_index = scope.get("row_index", 0)
@@ -61,6 +69,35 @@ def apply_docx_revisions(
                             _set_paragraph_text(cell.paragraphs[0], revised_text, font_name, font_size, align, bold, italic, underline, strike)
 
     doc.save(output_path)
+
+
+def _insert_table(doc: Any, para_index: int, rows: int, cols: int) -> None:
+    """Insert a rows×cols table after the paragraph at para_index (-1 = end of document)."""
+    # add_table appends to the body; we'll move it to the right position
+    table = doc.add_table(rows=rows, cols=cols)
+    try:
+        table.style = 'Table Grid'
+    except Exception:
+        pass
+
+    tbl = table._tbl
+    body = doc.element.body
+
+    # Remove from where add_table placed it (end of body)
+    body.remove(tbl)
+
+    # Find the reference element to insert after
+    paras = doc.paragraphs
+    if para_index >= 0 and para_index < len(paras):
+        ref_el = paras[para_index]._element
+        ref_el.addnext(tbl)
+    else:
+        # Append before the last sectPr if present, otherwise at end
+        sect_pr = body.find(qn('w:sectPr'))
+        if sect_pr is not None:
+            body.insert(list(body).index(sect_pr), tbl)
+        else:
+            body.append(tbl)
 
 
 def _set_paragraph_text(para: Any, text: str, font_name: str | None = None, font_size: float | None = None,

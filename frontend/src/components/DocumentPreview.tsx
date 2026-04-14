@@ -10,6 +10,7 @@ import {
   Redo2,
   Save,
   Strikethrough,
+  Table2,
   Underline,
   Undo2,
 } from 'lucide-react'
@@ -233,6 +234,10 @@ export default function DocumentPreview({
   const fontSizeBtnRef = useRef<HTMLButtonElement>(null)
   const savedRangesRef = useRef<Range[]>([])
   const [fontSizeMenuPos, setFontSizeMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const tableBtnRef = useRef<HTMLButtonElement>(null)
+  const [showTablePicker, setShowTablePicker] = useState(false)
+  const [tablePickerPos, setTablePickerPos] = useState<{ top: number; left: number } | null>(null)
+  const [hoverCell, setHoverCell] = useState<{ r: number; c: number } | null>(null)
 
   // ── Manual mode state ────────────────────────────────────────────────────
   // Tracks the currently-edited DOM element for inline DOCX editing
@@ -265,21 +270,25 @@ export default function DocumentPreview({
   }, [isManual])
 
   useEffect(() => {
-    if (!showFontSizeMenu) return
+    if (!showFontSizeMenu && !showTablePicker) return
 
     function handlePointerDown(event: MouseEvent) {
       if (toolbarRef.current?.contains(event.target as Node)) return
       setShowFontSizeMenu(false)
       setFontSizeMenuPos(null)
+      setShowTablePicker(false)
+      setTablePickerPos(null)
     }
 
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [showFontSizeMenu])
+  }, [showFontSizeMenu, showTablePicker])
 
   useEffect(() => {
     setShowFontSizeMenu(false)
     setFontSizeMenuPos(null)
+    setShowTablePicker(false)
+    setTablePickerPos(null)
     setManualEditorActive(false)
   }, [doc.file_id, isManual])
 
@@ -528,6 +537,22 @@ export default function DocumentPreview({
     }
   }
 
+  function insertTable(rows: number, cols: number) {
+    setShowTablePicker(false)
+    setTablePickerPos(null)
+    setHoverCell(null)
+    // Determine insertion point: after the currently-edited paragraph, last selected, or end
+    const paraIdx = manualEditRef.current?.index
+      ?? (selectedIndices.length > 0 ? Math.max(...selectedIndices) : -1)
+    // Commit any active edit before modifying document structure
+    if (manualEditRef.current) commitDocxEdit()
+    onDirectEdit?.({
+      scope: { type: 'insert_table', paragraph_index: paraIdx, rows, cols },
+      original: '',
+      revised: '',
+    })
+  }
+
   function ManualToolbar() {
     if (!isManual) return null
     const hasActiveEditor = manualEditorActive
@@ -685,6 +710,30 @@ export default function DocumentPreview({
             </button>
           </div>
 
+          {doc.file_type === 'docx' && (
+            <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+              <button
+                ref={tableBtnRef}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  if (showTablePicker) {
+                    setShowTablePicker(false)
+                    setTablePickerPos(null)
+                  } else {
+                    const rect = tableBtnRef.current?.getBoundingClientRect()
+                    if (rect) setTablePickerPos({ top: rect.bottom + 4, left: rect.left })
+                    setShowTablePicker(true)
+                    setHoverCell(null)
+                  }
+                }}
+                title="Insert table"
+                className={toolButtonClass}
+              >
+                <Table2 size={15} />
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
             <button
               type="button"
@@ -763,6 +812,39 @@ export default function DocumentPreview({
               {size} pt
             </button>
           ))}
+        </div>,
+        document.body,
+      )}
+
+      {/* Table picker — portal so it's never clipped */}
+      {showTablePicker && tablePickerPos && createPortal(
+        <div
+          style={{ position: 'fixed', top: tablePickerPos.top, left: tablePickerPos.left, zIndex: 9999 }}
+          className="rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
+          onMouseLeave={() => setHoverCell(null)}
+        >
+          <div className="mb-2 text-center text-xs text-gray-500 min-h-[1rem]">
+            {hoverCell ? `${hoverCell.r} × ${hoverCell.c} Table` : 'Insert table'}
+          </div>
+          <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(8, 1.25rem)' }}>
+            {Array.from({ length: 8 * 8 }, (_, i) => {
+              const r = Math.floor(i / 8) + 1
+              const c = (i % 8) + 1
+              const isHighlighted = hoverCell ? r <= hoverCell.r && c <= hoverCell.c : false
+              return (
+                <div
+                  key={i}
+                  className={`w-5 h-5 rounded-sm border transition-colors cursor-pointer ${
+                    isHighlighted
+                      ? 'bg-blue-100 border-blue-400'
+                      : 'bg-gray-50 border-gray-200 hover:bg-blue-50 hover:border-blue-300'
+                  }`}
+                  onMouseEnter={() => setHoverCell({ r, c })}
+                  onMouseDown={(e) => { e.preventDefault(); insertTable(r, c) }}
+                />
+              )
+            })}
+          </div>
         </div>,
         document.body,
       )}

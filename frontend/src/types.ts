@@ -93,13 +93,17 @@ export interface Workspace {
 }
 
 export interface RevisionScope {
-  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table'
+  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table'
   paragraph_indices?: number[]
   slide_index?: number
   shape_indices?: number[]
   table_index?: number
   row_index?: number
   cell_index?: number
+  // insert_table fields
+  paragraph_index?: number   // insert after this paragraph (-1 = end of document)
+  rows?: number
+  cols?: number
 }
 
 export interface Revision {

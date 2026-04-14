@@ -138,13 +138,17 @@ class LLMConfig(BaseModel):
 
 
 class RevisionScope(BaseModel):
-    type: str  # document | paragraphs | slide | shape | table_cell
+    type: str  # document | paragraphs | slide | shape | table_cell | insert_table
     paragraph_indices: Optional[list[int]] = None
     slide_index: Optional[int] = None
     shape_indices: Optional[list[int]] = None
     table_index: Optional[int] = None
     row_index: Optional[int] = None
     cell_index: Optional[int] = None
+    # insert_table fields
+    paragraph_index: Optional[int] = None   # insert after this paragraph (-1 = end)
+    rows: Optional[int] = None
+    cols: Optional[int] = None
 
 
 class ReviseRequest(BaseModel):
