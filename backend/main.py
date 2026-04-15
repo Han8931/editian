@@ -19,6 +19,7 @@ from writers.docx_writer import apply_docx_revisions
 from writers.pptx_writer import apply_pptx_revisions
 from llm import run_agent_loop, run_chat
 from storage import S3DocumentStorage, StorageConfigError
+import slide_renderer
 
 app = FastAPI(title="Editian")
 
@@ -34,6 +35,8 @@ FILES_DIR = Path.home() / ".editian" / "files"
 FILES_DIR.mkdir(parents=True, exist_ok=True)
 ASSETS_DIR = FILES_DIR.parent / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+SLIDES_DIR = FILES_DIR.parent / "slide_images"
+SLIDES_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_FILE = FILES_DIR.parent / "registry.json"
 
 load_dotenv(Path(__file__).with_name(".env"))
@@ -227,6 +230,14 @@ def _get_file(file_id: str) -> dict:
     if file_id not in _files:
         raise HTTPException(404, "File not found. Please re-upload.")
     return _files[file_id]
+
+
+def _slide_cache_dir(file_id: str) -> Path:
+    return SLIDES_DIR / file_id
+
+
+def _invalidate_slide_cache(file_id: str) -> None:
+    slide_renderer.invalidate(_slide_cache_dir(file_id))
 
 
 # ---------- Routes ----------
@@ -836,6 +847,7 @@ async def apply(req: ApplyRequest):
         apply_pptx_revisions(file_path, file_path, rev_dicts)
 
     _sync_file_to_remote(req.file_id)
+    _invalidate_slide_cache(req.file_id)
     _save_registry()
     return _build_response(req.file_id)
 
@@ -856,6 +868,7 @@ async def undo(file_id: str):
     shutil.copy2(snap, info["path"])
     Path(snap).unlink(missing_ok=True)
     _sync_file_to_remote(file_id)
+    _invalidate_slide_cache(file_id)
     _save_registry()
     return _build_response(file_id)
 
@@ -876,6 +889,7 @@ async def redo(file_id: str):
     shutil.copy2(snap, info["path"])
     Path(snap).unlink(missing_ok=True)
     _sync_file_to_remote(file_id)
+    _invalidate_slide_cache(file_id)
     _save_registry()
     return _build_response(file_id)
 
@@ -895,6 +909,35 @@ async def download(file_id: str):
 async def get_file(file_id: str):
     _get_file(file_id)
     return _build_response(file_id)
+
+
+@app.get("/api/files/{file_id}/slides/{slide_idx}/image")
+async def get_slide_image(file_id: str, slide_idx: int):
+    """Return a LibreOffice-rendered PNG for the given slide (cached by file mtime)."""
+    info = _get_file(file_id)
+    if info["type"] != "pptx":
+        raise HTTPException(400, "Slide images are only available for PPTX files.")
+    if not slide_renderer.backend_name():
+        raise HTTPException(503, "Slide renderer is not available.")
+    file_path = _ensure_local_file(file_id)
+
+    # Cache lives in a sub-dir keyed by the file's mtime so stale renders are
+    # never served after an edit.
+    try:
+        mtime_ns = str(int(Path(file_path).stat().st_mtime_ns))
+    except Exception:
+        mtime_ns = "0"
+    cache_dir = _slide_cache_dir(file_id) / mtime_ns
+
+    png_path = slide_renderer.get_or_render(file_path, slide_idx, cache_dir)
+    if png_path is None or not png_path.exists():
+        raise HTTPException(404, "Slide image could not be rendered.")
+
+    return FileResponse(
+        png_path,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/api/files/{file_id}/assets/{asset_name}")
@@ -943,6 +986,7 @@ async def delete_file(file_id: str):
     for p in _redo_stacks.pop(file_id, []):
         Path(p).unlink(missing_ok=True)
     shutil.rmtree(ASSETS_DIR / file_id, ignore_errors=True)
+    _invalidate_slide_cache(file_id)
     _save_registry()
     return {"ok": True}
 
@@ -1076,11 +1120,20 @@ def _build_response(file_id: str) -> dict:
     file_type = info["type"]
     file_path = _ensure_local_file(file_id)
 
+    # Use file mtime as a cache-busting version for slide images.
+    try:
+        slide_render_version = str(int(Path(file_path).stat().st_mtime_ns))
+    except Exception:
+        slide_render_version = "0"
+
     base = {
         "file_id": file_id,
         "name": info["name"],
         "can_undo": len(_undo_stacks.get(file_id, [])) > 0,
         "can_redo": len(_redo_stacks.get(file_id, [])) > 0,
+        "slide_render_version": slide_render_version,
+        "slide_renderer_available": slide_renderer.is_available(),
+        "slide_render_backend": slide_renderer.backend_name(),
     }
 
     if file_type == "docx":

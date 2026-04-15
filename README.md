@@ -5,7 +5,7 @@ A web tool for editing and polishing Word and PowerPoint documents using LLMs. U
 ## Features
 
 - **DOCX support** — renders document as HTML, edit by paragraph or entire document
-- **PPTX support** — slide-by-slide navigation, edit individual slides
+- **PPTX support** — slide-by-slide navigation, editable text/tables, and higher-fidelity slide preview
 - **Diff preview** — see before/after for every revision before applying
 - **Flexible LLM backend** — works with Ollama (local), OpenAI, or any OpenAI-compatible API
 - **Configurable file storage** — keep files on local disk or synchronize them through S3
@@ -18,6 +18,7 @@ editian/
 ├── backend/               # Python + FastAPI
 │   ├── main.py            # API routes: upload, revise, apply, download
 │   ├── llm.py             # LLM client abstraction (Ollama / OpenAI / compatible)
+│   ├── slide_renderer.py  # PPTX → PDF → per-slide PNG renderer
 │   ├── storage.py         # S3 storage helper for upload/download sync
 │   ├── parsers/
 │   │   ├── docx_parser.py # python-docx + mammoth → HTML
@@ -66,6 +67,44 @@ uvicorn main:app --reload
 ```
 
 Runs on `http://localhost:8000`.
+
+For the best PPTX preview quality, install these native tools on the backend machine.
+
+macOS:
+
+```bash
+brew install --cask libreoffice
+brew install poppler
+```
+
+Ubuntu / Debian:
+
+```bash
+sudo apt update
+sudo apt install -y libreoffice poppler-utils
+```
+
+Fedora:
+
+```bash
+sudo dnf install -y libreoffice poppler-utils
+```
+
+Windows:
+
+- Install LibreOffice so `soffice.exe` is available
+- Install Poppler for Windows so `pdftoppm.exe` is available
+- Add both binaries to `PATH`, or install them in standard locations the backend can detect
+
+The renderer looks for `soffice` and `pdftoppm` on `PATH`.
+
+The PPTX renderer uses a PDF-first pipeline:
+
+1. LibreOffice exports the uploaded `.pptx` to PDF
+2. `pdftoppm` renders that PDF into one PNG per slide
+3. The frontend uses those slide images as the visual base layer and keeps editable text/table hitboxes on top
+
+If LibreOffice or `pdftoppm` is unavailable, the app falls back to the HTML/Python reconstruction path, which is functional but less faithful for complex PowerPoint templates.
 
 Create `backend/.env` from `backend/.env.example`:
 
@@ -162,6 +201,13 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - Node.js 18+
 - An LLM: [Ollama](https://ollama.com) running locally, or an OpenAI API key
+- For PowerPoint-like PPTX rendering quality on macOS or Linux: LibreOffice + `pdftoppm` (Poppler)
+
+## Platform Notes
+
+- macOS and Linux are supported for the higher-fidelity PPTX renderer path
+- The renderer expects `soffice` and `pdftoppm` to be installed and available on the backend machine
+- Windows should be feasible with LibreOffice + Poppler, but the renderer path is not fully wired or tested yet
 
 
 # Todos

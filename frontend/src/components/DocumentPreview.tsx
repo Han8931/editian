@@ -596,9 +596,15 @@ export default function DocumentPreview({
   // PPTX: auto-scale slide canvas to fit container width
   const slideContainerRef = useRef<HTMLDivElement>(null)
   const [slideScale, setSlideScale] = useState(1)
+  const [slideRenderStatus, setSlideRenderStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
   const pptxStructure = doc.file_type === 'pptx' ? (doc.structure as import('../types').PptxStructure) : null
   const naturalW = pptxStructure ? pptxStructure.slide_width / 12700 : 960
   const naturalH = pptxStructure ? pptxStructure.slide_height / 12700 : 540
+  const slideRendererAvailable = doc.file_type === 'pptx' && doc.slide_renderer_available === true
+  const renderedSlideImageSrc = slideRendererAvailable
+    ? `${API_BASE_URL}/api/files/${doc.file_id}/slides/${currentSlide}/image?v=${encodeURIComponent(doc.slide_render_version ?? '0')}`
+    : null
+  const useRenderedSlideImage = slideRendererAvailable && slideRenderStatus === 'loaded'
 
   useEffect(() => {
     const el = slideContainerRef.current
@@ -609,6 +615,11 @@ export default function DocumentPreview({
     obs.observe(el)
     return () => obs.disconnect()
   }, [naturalW, doc.file_type])
+
+  useEffect(() => {
+    if (doc.file_type !== 'pptx') return
+    setSlideRenderStatus(slideRendererAvailable ? 'loading' : 'failed')
+  }, [doc.file_type, doc.file_id, currentSlide, doc.slide_render_version, slideRendererAvailable])
 
   // Standard page height in px at 100% zoom: A4/Letter ≈ 11in × 96dpi = 1056px
   const PAGE_HEIGHT_PX = 1056
@@ -1411,6 +1422,26 @@ export default function DocumentPreview({
               borderRadius: 4,
             }}
           >
+            {renderedSlideImageSrc && slideRenderStatus !== 'failed' && (
+              <img
+                src={renderedSlideImageSrc}
+                alt={`Slide ${currentSlide + 1}`}
+                draggable={false}
+                onLoad={() => setSlideRenderStatus('loaded')}
+                onError={() => setSlideRenderStatus('failed')}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'fill',
+                  zIndex: 0,
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  opacity: slideRenderStatus === 'loaded' ? 1 : 0,
+                }}
+              />
+            )}
             {/* Natural-size canvas scaled to fit the shell */}
             <div
               style={{
@@ -1421,6 +1452,7 @@ export default function DocumentPreview({
                 height: naturalH,
                 transform: `scale(${slideScale})`,
                 transformOrigin: 'top left',
+                zIndex: 1,
               }}
             >
               {slide?.shapes.length ? (
@@ -1434,10 +1466,17 @@ export default function DocumentPreview({
                   const isTableSelected = isTable && !isManual && selectedTable === shape.index
                   const resolvedImageSrc = isImage ? resolvePreviewImageSrc(shape.image_src) : undefined
                   const transform = shapeTransform(shape)
+                  const hideDecorationLayer = useRenderedSlideImage && isDecoration
+                  const hideImageLayer = useRenderedSlideImage && isImage
+                  const useGhostTextLayer = useRenderedSlideImage && isInteractive && !isEditing
+                  const useGhostTableLayer = useRenderedSlideImage && isTable && !(
+                    isManual && editing?.index === shape.index
+                  )
                   const justify =
                     shape.vertical_anchor === 'middle' ? 'center'
                     : shape.vertical_anchor === 'bottom' ? 'flex-end'
                     : 'flex-start'
+                  if (hideDecorationLayer || hideImageLayer) return null
                   return (
                     <div
                       key={`${shape.index}-${pos}`}
@@ -1457,7 +1496,9 @@ export default function DocumentPreview({
                         } : {}),
                         ...(isTable ? {
                           cursor: isManual ? 'text' : 'pointer',
-                          backgroundColor: isTableSelected ? 'rgba(219,234,254,0.35)' : undefined,
+                          backgroundColor: useGhostTableLayer
+                            ? (isTableSelected ? 'rgba(219,234,254,0.18)' : 'transparent')
+                            : (isTableSelected ? 'rgba(219,234,254,0.35)' : undefined),
                           outline: isTableSelected ? '2px solid #93c5fd' : undefined,
                           outlineOffset: 1,
                         } : {}),
@@ -1467,8 +1508,10 @@ export default function DocumentPreview({
                           display: 'flex',
                           flexDirection: 'column',
                           justifyContent: justify,
-                          backgroundColor: isEditing
-                            ? '#eff6ff'
+                          backgroundColor: useGhostTextLayer
+                            ? (isSelected ? 'rgba(219,234,254,0.16)' : 'transparent')
+                            : isEditing
+                            ? 'rgba(255,255,255,0.92)'
                             : isSelected
                             ? 'rgba(219,234,254,0.6)'
                             : (shape.fill_color ?? undefined),
@@ -1478,6 +1521,7 @@ export default function DocumentPreview({
                             ? '1px solid #93c5fd'
                             : undefined,
                           outlineOffset: 1,
+                          boxShadow: isEditing ? '0 8px 24px rgba(15,23,42,0.12)' : undefined,
                         } : {}),
                       }}
                       onMouseDown={isTable ? (e) => {
@@ -1579,23 +1623,31 @@ export default function DocumentPreview({
                             {shape.table_data.map((row, ri) => (
                               <tr key={ri}>
                                 {row.map((cell, ci) => (
+                                  (() => {
+                                    const isEditingCell = isManual
+                                      && editing?.index === shape.index
+                                      && editing.cellRef?.t === shape.index
+                                      && editing.cellRef?.r === ri
+                                      && editing.cellRef?.c === ci
+                                    const isGhostCell = useGhostTableLayer && !isEditingCell
+                                    return (
                                   <td
                                     key={ci}
                                     data-pptx-cell-ref={`t${shape.index}r${ri}c${ci}`}
-                                    contentEditable={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? true : undefined}
-                                    suppressContentEditableWarning={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci}
-                                    onBlur={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (e) => {
+                                    contentEditable={isEditingCell ? true : undefined}
+                                    suppressContentEditableWarning={isEditingCell}
+                                    onBlur={isEditingCell ? (e) => {
                                       if (toolbarInteractionRef.current) return
                                       manualShapeElementRef.current = e.currentTarget
                                       manualShapeDraftRef.current = e.currentTarget.innerText
                                       saveEdit()
                                     } : undefined}
-                                    onInput={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (e) => {
+                                    onInput={isEditingCell ? (e) => {
                                       manualShapeElementRef.current = e.currentTarget
                                       manualShapeDraftRef.current = e.currentTarget.innerText
                                       setHasPendingEdit(true)
                                     } : undefined}
-                                    onKeyDown={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (e) => {
+                                    onKeyDown={isEditingCell ? (e) => {
                                       handleManualHistoryShortcut(e)
                                       if (e.defaultPrevented) return
                                       if (e.key === 'Escape') {
@@ -1607,23 +1659,29 @@ export default function DocumentPreview({
                                         saveEdit()
                                       }
                                     } : undefined}
-                                    ref={isManual && editing?.index === shape.index && editing.cellRef?.t === shape.index && editing.cellRef?.r === ri && editing.cellRef?.c === ci ? (el) => {
+                                    ref={isEditingCell ? (el) => {
                                       manualShapeElementRef.current = el
                                     } : undefined}
                                     style={{
-                                      border: '1px solid #aaa',
+                                      border: isGhostCell ? '1px solid transparent' : '1px solid #aaa',
                                       padding: '2px 6px',
-                                      backgroundColor: cell.fill ?? (ri === 0 ? '#d9e1f2' : ci % 2 === 0 ? '#ffffff' : '#f2f2f2'),
+                                      backgroundColor: isGhostCell
+                                        ? 'transparent'
+                                        : cell.fill ?? (ri === 0 ? '#d9e1f2' : ci % 2 === 0 ? '#ffffff' : '#f2f2f2'),
                                       fontWeight: ri === 0 ? 'bold' : 'normal',
                                       verticalAlign: 'middle',
                                       overflow: 'hidden',
                                       whiteSpace: 'pre-wrap',
                                       wordBreak: 'break-word',
                                       outline: !isManual && isTableSelected ? '1px solid #93c5fd' : undefined,
+                                      color: isGhostCell ? 'transparent' : undefined,
+                                      caretColor: isGhostCell ? 'transparent' : undefined,
                                     }}
                                   >
                                     {cell.text}
                                   </td>
+                                    )
+                                  })()
                                 ))}
                               </tr>
                             ))}
@@ -1644,6 +1702,7 @@ export default function DocumentPreview({
                               listStyleType: para.bullet && !(isManual && isEditing) ? 'disc' : undefined,
                               listStylePosition: para.bullet && !(isManual && isEditing) ? 'outside' : undefined,
                               marginLeft: para.bullet && !(isManual && isEditing) ? `${1.2 + (para.level ?? 0) * 1.1}em` : undefined,
+                              color: useGhostTextLayer ? 'transparent' : undefined,
                             }}
                           >
                             {para.runs.map((run, ri) => (
@@ -1655,7 +1714,7 @@ export default function DocumentPreview({
                                   fontWeight: run.bold ? 'bold' : 'normal',
                                   fontStyle: run.italic ? 'italic' : 'normal',
                                   textDecoration: [run.underline ? 'underline' : '', run.strike ? 'line-through' : ''].filter(Boolean).join(' ') || undefined,
-                                  color: run.color ?? '#1a1a1a',
+                                  color: useGhostTextLayer ? 'transparent' : (run.color ?? '#1a1a1a'),
                                 }}
                               >
                                 {run.text}

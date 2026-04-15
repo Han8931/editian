@@ -94,6 +94,9 @@ export interface UploadResponse {
   structure: DocxStructure | PptxStructure
   can_undo: boolean
   can_redo: boolean
+  slide_render_version?: string
+  slide_renderer_available?: boolean
+  slide_render_backend?: string | null
 }
 
 export interface Directory {
