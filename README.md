@@ -234,6 +234,6 @@ For DOCX multi-selection, the AI mode can now:
 - Layout change
 - Close button remove
 - Logging
-- Bullet / Font type
-- Revise result style
-- PPTX, text box
+- Table generation for docx
+- Markdown support
+- Dockerize / Containerize
