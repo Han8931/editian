@@ -116,7 +116,7 @@ export interface Workspace {
 }
 
 export interface RevisionScope {
-  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table' | 'insert_slide' | 'delete_slide' | 'duplicate_slide' | 'insert_text_box' | 'move_shape'
+  type: 'document' | 'paragraphs' | 'merge_paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table' | 'insert_paragraph' | 'delete_paragraph' | 'insert_slide' | 'delete_slide' | 'duplicate_slide' | 'insert_text_box' | 'move_shape'
   paragraph_indices?: number[]
   slide_index?: number
   shape_indices?: number[]

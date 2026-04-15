@@ -1,4 +1,5 @@
 import html as _html
+import re
 import zipfile
 from xml.etree import ElementTree as ET
 from docx import Document
@@ -193,21 +194,42 @@ def _para_styles(para) -> tuple[str, str]:
     return tag, '; '.join(styles)
 
 
+def _style_list_info(para) -> dict | None:
+    try:
+        style_name = (para.style.name if para.style else '').strip()
+    except Exception:
+        style_name = ''
+
+    if style_name:
+        bullet_match = re.match(r'^List Bullet(?:\s+(\d+))?$', style_name, re.IGNORECASE)
+        number_match = re.match(r'^List Number(?:\s+(\d+))?$', style_name, re.IGNORECASE)
+        match = bullet_match or number_match
+        if match:
+            level = max(int(match.group(1) or '1') - 1, 0)
+            return {
+                'num_id': -abs(hash(style_name)),
+                'level': level,
+                'is_ordered': bool(number_match),
+            }
+
+    return None
+
+
 def _get_list_info(para, doc) -> dict | None:
     """Returns {num_id, level, is_ordered} if para is a list item, else None."""
     try:
         pPr = para._p.find(qn('w:pPr'))
         if pPr is None:
-            return None
+            return _style_list_info(para)
         numPr = pPr.find(qn('w:numPr'))
         if numPr is None:
-            return None
+            return _style_list_info(para)
         numId_el = numPr.find(qn('w:numId'))
         if numId_el is None:
-            return None
+            return _style_list_info(para)
         num_id = int(numId_el.get(qn('w:val'), 0))
         if num_id == 0:
-            return None
+            return _style_list_info(para)
         ilvl_el = numPr.find(qn('w:ilvl'))
         level = int(ilvl_el.get(qn('w:val'), 0)) if ilvl_el is not None else 0
 
@@ -234,7 +256,7 @@ def _get_list_info(para, doc) -> dict | None:
 
         return {'num_id': num_id, 'level': level, 'is_ordered': is_ordered}
     except Exception:
-        return None
+        return _style_list_info(para)
 
 
 def _render_paragraph(para, index: int | None = None) -> str:
@@ -354,6 +376,10 @@ def get_docx_html(file_path: str) -> str:
         while list_stack and list_stack[-1][2] > target_level:
             parts.append(f'</{list_stack.pop()[0]}>')
 
+    def close_lists_at_or_deeper_than(target_level: int) -> None:
+        while list_stack and list_stack[-1][2] >= target_level:
+            parts.append(f'</{list_stack.pop()[0]}>')
+
     def close_all_lists() -> None:
         while list_stack:
             parts.append(f'</{list_stack.pop()[0]}>')
@@ -372,11 +398,19 @@ def get_docx_html(file_path: str) -> str:
             if list_info:
                 level = list_info['level']
                 list_tag = 'ol' if list_info['is_ordered'] else 'ul'
+                list_id = list_info['num_id']
 
                 close_lists_deeper_than(level)
 
+                if (
+                    list_stack
+                    and list_stack[-1][2] == level
+                    and (list_stack[-1][0] != list_tag or list_stack[-1][1] != list_id)
+                ):
+                    close_lists_at_or_deeper_than(level)
+
                 if not list_stack or list_stack[-1][2] < level:
-                    list_stack.append((list_tag, list_info['num_id'], level))
+                    list_stack.append((list_tag, list_id, level))
                     indent_px = (level + 1) * 24
                     parts.append(
                         f'<{list_tag} style="padding-left: {indent_px}px; margin: 4px 0;">'

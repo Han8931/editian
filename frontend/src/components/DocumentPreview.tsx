@@ -57,7 +57,7 @@ type ManualEditRef = {
   cellRef?: CellRef
 } | null
 
-type CapturedFormatting = Pick<Revision, 'font_name' | 'font_size' | 'align' | 'bold' | 'italic' | 'underline' | 'strike'>
+type CapturedFormatting = Pick<Revision, 'font_name' | 'font_size' | 'align' | 'bold' | 'italic' | 'underline' | 'strike' | 'bullet'>
 
 /** Returns the data-para-index of the element under the pointer, or null. */
 function paraIndexAt(x: number, y: number): number | null {
@@ -303,6 +303,14 @@ function captureFormatting(root: HTMLElement): CapturedFormatting {
     .split(',')
     .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
     .find(Boolean)
+  const bullet = (() => {
+    const listRoot = root.closest('li, ul, ol')
+    if (listRoot?.tagName === 'LI') return true
+    if (root.tagName === 'LI') return true
+    if (root.querySelector('li')) return true
+    const display = window.getComputedStyle(root).display
+    return display === 'list-item'
+  })()
 
   return {
     font_name: rawFontFamily && rawFontFamily !== 'sans-serif' ? rawFontFamily : null,
@@ -312,6 +320,7 @@ function captureFormatting(root: HTMLElement): CapturedFormatting {
     italic: commandStateFromElement(root, 'em,i', (s) => s.fontStyle === 'italic' || s.fontStyle === 'oblique'),
     underline: commandStateFromElement(root, 'u', (s) => s.textDecorationLine.includes('underline')),
     strike: commandStateFromElement(root, 's,strike', (s) => s.textDecorationLine.includes('line-through')),
+    bullet,
   }
 }
 
@@ -338,6 +347,7 @@ function formattingChanged(a: CapturedFormatting | undefined, b: CapturedFormatt
     || !sameValue(a?.italic, b.italic)
     || !sameValue(a?.underline, b.underline)
     || !sameValue(a?.strike, b.strike)
+    || !sameValue(a?.bullet, b.bullet)
 }
 
 function swallowPointerEvent(event: React.SyntheticEvent) {

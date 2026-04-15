@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
-import { Settings2, ArrowLeft, Sparkles, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2 } from 'lucide-react'
+import { Settings2, ArrowLeft, Sparkles, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage } from '../types'
@@ -24,21 +24,55 @@ const DEFAULT_LLM: LLMConfig = {
   timeout: 120,
 }
 
-const SUGGESTIONS = [
-  'Make more concise',
-  'Fix grammar',
-  'More formal',
-  'Simplify language',
-  'Improve clarity',
-  'Stronger opening',
+const DOCX_DOCUMENT_SUGGESTIONS = [
+  'Fix grammar and tone throughout the document',
+  'Make the writing more concise',
+  'Rewrite the introduction to sound more professional',
+  'Add a short executive summary at the top',
+  'Turn the main points into bullet points',
+  'Strengthen the opening paragraph',
 ]
 
-const PPTX_SUGGESTIONS = [
+const DOCX_SINGLE_PARAGRAPH_SUGGESTIONS = [
+  'Paraphrase this paragraph',
+  'Make this more concise',
+  'Fix grammar and tone',
+  'Turn this into bullet points',
+  'Make this more formal',
+  'Add a short example below',
+]
+
+const DOCX_MULTI_PARAGRAPH_SUGGESTIONS = [
+  'Summarize this and put it below',
+  'Merge these into one paragraph',
+  'Rewrite this section for clarity',
+  'Make this section more concise',
+  'Turn this into bullet points',
+  'Make this section more formal',
+]
+
+const TABLE_SUGGESTIONS = [
+  'Rewrite the selected cells more clearly',
+  'Standardize the wording in this table',
+  'Make the text more concise',
+  'Use a more professional tone',
+]
+
+const PPTX_SLIDE_SUGGESTIONS = [
+  'Make this slide more concise',
+  'Rewrite this slide for an executive audience',
+  'Turn this slide into 3 bullet points',
+  'Fix grammar on this slide',
+  'Shorten the title and body',
   'Add a new slide about',
-  'Make more concise',
+]
+
+const PPTX_SHAPE_SUGGESTIONS = [
+  'Rewrite this text more clearly',
+  'Make this shorter',
   'Fix grammar',
-  'More formal',
-  'Improve clarity',
+  'Turn this into bullet points',
+  'Make this more formal',
 ]
 
 function loadSavedLLM(): LLMConfig {
@@ -47,6 +81,19 @@ function loadSavedLLM(): LLMConfig {
     if (raw) return { ...DEFAULT_LLM, ...JSON.parse(raw) }
   } catch {}
   return DEFAULT_LLM
+}
+
+function getEditSuggestions(isPptx: boolean, selectedIndices: number[], selectedTable?: number | null): string[] {
+  if (selectedTable != null) return TABLE_SUGGESTIONS
+
+  if (isPptx) {
+    if (selectedIndices.length > 0) return PPTX_SHAPE_SUGGESTIONS
+    return PPTX_SLIDE_SUGGESTIONS
+  }
+
+  if (selectedIndices.length > 1) return DOCX_MULTI_PARAGRAPH_SUGGESTIONS
+  if (selectedIndices.length === 1) return DOCX_SINGLE_PARAGRAPH_SUGGESTIONS
+  return DOCX_DOCUMENT_SUGGESTIONS
 }
 
 export default function Sidebar({
@@ -73,7 +120,9 @@ export default function Sidebar({
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [copiedChatIndex, setCopiedChatIndex] = useState<number | null>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
+  const copyResetTimerRef = useRef<number | null>(null)
 
   const isPptx = doc.file_type === 'pptx'
 
@@ -81,6 +130,12 @@ export default function Sidebar({
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages, chatLoading])
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current != null) {
+      window.clearTimeout(copyResetTimerRef.current)
+    }
+  }, [])
 
   function buildScope(): RevisionScope {
     if (selectedTable != null) {
@@ -104,6 +159,11 @@ export default function Sidebar({
     setEditError(null)
     try {
       const result = await reviseDocument({ file_id: doc.file_id, scope: buildScope(), instruction, llm, current_slide: isPptx ? currentSlide : undefined })
+      if (result.revisions.length === 0) {
+        setRevisions([])
+        setEditError('The AI did not produce any changes for this selection. Try selecting a full paragraph or rephrasing the instruction.')
+        return
+      }
       setRevisions(result.revisions)
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Revision failed.')
@@ -178,6 +238,22 @@ export default function Sidebar({
     setActiveTab('edit')
   }
 
+  async function copyChatMessage(content: string, index: number) {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopiedChatIndex(index)
+      if (copyResetTimerRef.current != null) {
+        window.clearTimeout(copyResetTimerRef.current)
+      }
+      copyResetTimerRef.current = window.setTimeout(() => {
+        setCopiedChatIndex(null)
+        copyResetTimerRef.current = null
+      }, 1500)
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : 'Failed to copy message.')
+    }
+  }
+
   // ── Settings screen ────────────────────────────────────────────────────
 
   if (showSettings) {
@@ -202,6 +278,7 @@ export default function Sidebar({
   })()
 
   const pptxStructure = isPptx ? (doc.structure as PptxStructure) : null
+  const suggestions = getEditSuggestions(isPptx, selectedIndices, selectedTable)
 
   return (
     <aside className="border-l border-gray-200 bg-white flex flex-col flex-shrink-0" style={style}>
@@ -283,7 +360,7 @@ export default function Sidebar({
             {!instruction && (
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap gap-1.5">
-                  {(isPptx ? PPTX_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                  {suggestions.map((s) => (
                     <button
                       key={s}
                       onClick={() => setInstruction(s === 'Add a new slide about' ? 'Add a new slide about ' : s)}
@@ -299,7 +376,12 @@ export default function Sidebar({
                 </div>
                 {isPptx && (
                   <p className="text-xs text-gray-400">
-                    Tip: you can ask to add a new slide, revise existing text, or change formatting.
+                    Tip: you can revise slide text, add a new slide, or edit the selected shape/table content.
+                  </p>
+                )}
+                {!isPptx && selectedIndices.length > 1 && selectedTable == null && (
+                  <p className="text-xs text-gray-400">
+                    Tip: multi-selection can rewrite each paragraph, merge them into one, or add a new summary below.
                   </p>
                 )}
               </div>
@@ -412,14 +494,24 @@ export default function Sidebar({
                   </div>
                 )}
                 {msg.role === 'assistant' && (
-                  <button
-                    onClick={() => useAsInstruction(msg.content)}
-                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors px-1"
-                    title="Use as edit instruction"
-                  >
-                    <PenLine size={11} />
-                    Use as instruction
-                  </button>
+                  <div className="flex items-center gap-3 px-1">
+                    <button
+                      onClick={() => copyChatMessage(msg.content, i)}
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                      title="Copy response"
+                    >
+                      {copiedChatIndex === i ? <Check size={11} /> : <Copy size={11} />}
+                      {copiedChatIndex === i ? 'Copied' : 'Copy'}
+                    </button>
+                    <button
+                      onClick={() => useAsInstruction(msg.content)}
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors"
+                      title="Use as edit instruction"
+                    >
+                      <PenLine size={11} />
+                      Use as instruction
+                    </button>
+                  </div>
                 )}
               </div>
             ))}

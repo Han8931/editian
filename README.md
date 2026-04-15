@@ -4,7 +4,8 @@ A web tool for editing and polishing Word and PowerPoint documents using LLMs. U
 
 ## Features
 
-- **DOCX support** — renders document as HTML, edit by paragraph or entire document
+- **DOCX support** — renders document as HTML, edit by paragraph or entire document, and review AI diffs before applying
+- **DOCX structural AI edits** — insert paragraphs, delete paragraphs, summarize a selected passage below, or merge multiple selected paragraphs into one
 - **PPTX support** — slide-by-slide navigation, editable text/tables, and higher-fidelity slide preview
 - **Diff preview** — see before/after for every revision before applying
 - **Flexible LLM backend** — works with Ollama (local), OpenAI, or any OpenAI-compatible API
@@ -194,6 +195,23 @@ The app supports three LLM providers, configurable from the settings panel (⚙)
 5. Click **Revise** (or ⌘ Enter)
 6. Review the before/after diff — click **Accept** or **Reject**
 7. Click **Download** in the top bar to save the revised file
+
+### AI Edit Examples
+
+The AI edit panel shows different sample prompts depending on what is selected.
+
+- DOCX whole document: `Fix grammar and tone throughout the document`
+- DOCX single paragraph: `Paraphrase this paragraph`
+- DOCX multi-selection: `Summarize this and put it below` or `Merge these into one paragraph`
+- DOCX table selection: `Standardize the wording in this table`
+- PPTX current slide: `Make this slide more concise` or `Add a new slide about...`
+- PPTX selected shape: `Rewrite this text more clearly`
+
+For DOCX multi-selection, the AI mode can now:
+
+- rewrite each selected paragraph individually
+- insert one new paragraph below the selection
+- merge the selected paragraphs into one replacement paragraph
 
 ## Requirements
 

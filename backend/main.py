@@ -173,7 +173,7 @@ class LLMConfig(BaseModel):
 
 
 class RevisionScope(BaseModel):
-    type: str  # document | paragraphs | slide | shape | table_cell | insert_table | insert_slide | delete_slide | duplicate_slide | insert_text_box
+    type: str  # document | paragraphs | slide | shape | table_cell | insert_table | insert_paragraph | delete_paragraph | insert_slide | delete_slide | duplicate_slide | insert_text_box
     paragraph_indices: Optional[list[int]] = None
     slide_index: Optional[int] = None
     shape_indices: Optional[list[int]] = None
@@ -287,12 +287,18 @@ async def revise(req: ReviseRequest):
 
 _SYSTEM_PROMPT = (
     "You are a document editor. Apply the user's instruction exactly. "
-    "— To REVISE existing content: call revise_text or revise_shape for each item that needs changing. "
+    "— To REVISE existing content: call revise_text, revise_paragraph, or revise_shape for each item that needs changing. "
+    "  When multiple DOCX paragraphs are selected, prefer revise_paragraphs_batch. "
     "  Items labeled [context] are reference only — do NOT revise them. "
     "  Only revise items with a numeric label (e.g. [3], [shape=2]). "
     "  For formatting-only changes, call the tool with the original text unchanged and set the formatting params. "
     "  revised_text must be plain text — never include HTML, XML, or markup. "
     "  Alignment: left | center | right | justify. "
+    "— For DOCX, to ADD a new paragraph: call insert_paragraph with the target paragraph index and text. "
+    "  Use paragraph_index=-1 to append at the end. "
+    "  When the user wants one new paragraph below a selected DOCX passage, prefer insert_paragraph_after_selection. "
+    "— For DOCX, to DELETE an existing paragraph: call delete_paragraph with that paragraph index. "
+    "— For DOCX, to MERGE the selected paragraphs into one replacement paragraph: call merge_selected_paragraphs. "
     "— To ADD a new slide: call add_slide with a clear title and body. "
     "  Use after_slide_index=-1 to append at the end, or a specific 0-based index to insert after that slide. "
     "— To ADD new text to an existing slide: call add_text_box with the slide_index and text. "
@@ -374,6 +380,26 @@ _REVISE_PARAGRAPH_TOOL = _tool(
     ["index", "revised_text"],
 )
 
+_REVISE_PARAGRAPHS_BATCH_TOOL = _tool(
+    "revise_paragraphs_batch",
+    "Update multiple selected paragraphs in one call. Include one item per paragraph that should change.",
+    {
+        "revisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer", "description": "Paragraph index (as shown in brackets)"},
+                    "revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"},
+                    **_FORMAT_PROPS,
+                },
+                "required": ["index", "revised_text"],
+            },
+        },
+    },
+    ["revisions"],
+)
+
 _REVISE_CELL_TOOL = _tool(
     "revise_table_cell",
     "Update a table cell's text and/or formatting (font_name, font_size, align, bold, italic, underline).",
@@ -384,6 +410,49 @@ _REVISE_CELL_TOOL = _tool(
         **_FORMAT_PROPS,
     },
     ["row_index", "cell_index", "revised_text"],
+)
+
+_INSERT_PARAGRAPH_TOOL = _tool(
+    "insert_paragraph",
+    "Insert a new paragraph after the specified paragraph index. Use paragraph_index=-1 to append at the end.",
+    {
+        "paragraph_index": {
+            "type": "integer",
+            "description": "Insert the new paragraph after this 0-based paragraph index. Use -1 to append at the end.",
+        },
+        "text": {"type": "string", "description": "Text for the new paragraph."},
+        **_FORMAT_PROPS,
+    },
+    ["paragraph_index", "text"],
+)
+
+_INSERT_PARAGRAPH_AFTER_SELECTION_TOOL = _tool(
+    "insert_paragraph_after_selection",
+    "Insert one new paragraph immediately below the selected DOCX paragraph selection.",
+    {
+        "text": {"type": "string", "description": "Text for the new paragraph to place below the selection."},
+        **_FORMAT_PROPS,
+    },
+    ["text"],
+)
+
+_MERGE_SELECTED_PARAGRAPHS_TOOL = _tool(
+    "merge_selected_paragraphs",
+    "Merge the selected DOCX paragraphs into one replacement paragraph.",
+    {
+        "revised_text": {"type": "string", "description": "The merged plain text that should replace the selected paragraphs."},
+        **_FORMAT_PROPS,
+    },
+    ["revised_text"],
+)
+
+_DELETE_PARAGRAPH_TOOL = _tool(
+    "delete_paragraph",
+    "Delete an existing paragraph by its 0-based paragraph index.",
+    {
+        "index": {"type": "integer", "description": "Paragraph index (as shown in brackets)."},
+    },
+    ["index"],
 )
 
 _ADD_SLIDE_TOOL = _tool(
@@ -454,7 +523,14 @@ async def _do_revise(req, file_type, file_path, llm):
             paras_text = "\n\n".join(
                 f"[{p['index']}] {p['text']}" for p in paragraphs if p["text"].strip()
             )
-            calls = call_agent(f"Paragraphs:\n{paras_text}\n\nInstruction: {req.instruction}", [_REVISE_PARAGRAPH_TOOL])
+            prompt = (
+                f"Paragraphs:\n{paras_text}\n\n"
+                f"Instruction: {req.instruction}\n\n"
+                "If the instruction is to revise existing text, call revise_paragraph. "
+                "If it asks to add a new paragraph, call insert_paragraph. "
+                "If it asks to remove a paragraph, call delete_paragraph."
+            )
+            calls = call_agent(prompt, [_REVISE_PARAGRAPH_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL])
             para_map = {p["index"]: p for p in paragraphs}
             for name, args in calls:
                 if name == "revise_paragraph":
@@ -471,19 +547,48 @@ async def _do_revise(req, file_type, file_path, llm):
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
                         })
+                elif name == "insert_paragraph":
+                    paragraph_index = args.get("paragraph_index", -1)
+                    revisions.append({
+                        "scope": {"type": "insert_paragraph", "paragraph_index": paragraph_index},
+                        "original": "",
+                        "revised": args["text"],
+                        "font_name": args.get("font_name"),
+                        "font_size": args.get("font_size"),
+                        "align": args.get("align"),
+                        "bold": args.get("bold"),
+                        "italic": args.get("italic"),
+                        "underline": args.get("underline"),
+                    })
+                elif name == "delete_paragraph":
+                    idx = args["index"]
+                    if idx in para_map:
+                        revisions.append({
+                            "scope": {"type": "delete_paragraph", "paragraph_indices": [idx]},
+                            "original": para_map[idx]["text"],
+                            "revised": "",
+                        })
 
         elif req.scope.type == "paragraphs":
             selected_indices = set(req.scope.paragraph_indices or [])
             paras_text = _para_prompt(paragraphs, selected_indices)
-            calls = call_agent(f"Paragraphs:\n{paras_text}\n\nInstruction: {req.instruction}", [_REVISE_PARAGRAPH_TOOL])
             para_map = {p["index"]: p for p in paragraphs if p["index"] in selected_indices}
-            for name, args in calls:
-                if name == "revise_paragraph":
-                    idx = args["index"]
-                    if idx in para_map:
+            if len(para_map) == 1:
+                idx, para = next(iter(para_map.items()))
+                prompt = (
+                    f"Selected paragraph:\n[target] {para['text']}\n\n"
+                    f"Nearby context:\n{paras_text}\n\n"
+                    f"Instruction: {req.instruction}\n\n"
+                    "To change the selected paragraph text, call revise_text. "
+                    "To remove the selected paragraph, call delete_paragraph with its numeric index. "
+                    "To add a new paragraph near it, call insert_paragraph after that numeric index."
+                )
+                calls = call_agent(prompt, [_REVISE_TEXT_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL])
+                for name, args in calls:
+                    if name == "revise_text":
                         revisions.append({
                             "scope": {"type": "paragraphs", "paragraph_indices": [idx]},
-                            "original": para_map[idx]["text"],
+                            "original": para["text"],
                             "revised": args["revised_text"],
                             "font_name": args.get("font_name"),
                             "font_size": args.get("font_size"),
@@ -492,6 +597,130 @@ async def _do_revise(req, file_type, file_path, llm):
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
                         })
+                    elif name == "insert_paragraph":
+                        paragraph_index = args.get("paragraph_index", idx)
+                        if paragraph_index == idx or paragraph_index == -1:
+                            revisions.append({
+                                "scope": {"type": "insert_paragraph", "paragraph_index": paragraph_index},
+                                "original": "",
+                                "revised": args["text"],
+                                "font_name": args.get("font_name"),
+                                "font_size": args.get("font_size"),
+                                "align": args.get("align"),
+                                "bold": args.get("bold"),
+                                "italic": args.get("italic"),
+                                "underline": args.get("underline"),
+                            })
+                    elif name == "delete_paragraph":
+                        delete_idx = args["index"]
+                        if delete_idx == idx:
+                            revisions.append({
+                                "scope": {"type": "delete_paragraph", "paragraph_indices": [idx]},
+                                "original": para["text"],
+                                "revised": "",
+                            })
+            else:
+                insert_after_index = max(selected_indices) if selected_indices else -1
+                ordered_indices = sorted(para_map)
+                selected_original = "\n\n".join(para_map[idx]["text"] for idx in ordered_indices)
+                prompt = (
+                    f"Paragraphs:\n{paras_text}\n\n"
+                    f"Instruction: {req.instruction}\n\n"
+                    "Treat the numbered paragraphs together as the selected passage. "
+                    "For revising multiple selected paragraphs, prefer a single revise_paragraphs_batch call with one revision item per numbered paragraph that should change. "
+                    "If the user wants the selected paragraphs merged into one replacement paragraph, call merge_selected_paragraphs. "
+                    f"If the user wants one combined output below the selection, call insert_paragraph_after_selection and it will be inserted after paragraph {insert_after_index}. "
+                    "Only delete paragraphs that have numeric labels, never [context]. "
+                    "If adding text nearby, insert a new paragraph after one of the numbered paragraphs."
+                )
+                calls = call_agent(
+                    prompt,
+                    [
+                        _REVISE_PARAGRAPHS_BATCH_TOOL,
+                        _MERGE_SELECTED_PARAGRAPHS_TOOL,
+                        _REVISE_PARAGRAPH_TOOL,
+                        _INSERT_PARAGRAPH_AFTER_SELECTION_TOOL,
+                        _INSERT_PARAGRAPH_TOOL,
+                        _DELETE_PARAGRAPH_TOOL,
+                    ],
+                )
+                for name, args in calls:
+                    if name == "revise_paragraphs_batch":
+                        for item in args.get("revisions", []):
+                            idx = item.get("index")
+                            if idx in para_map:
+                                revisions.append({
+                                    "scope": {"type": "paragraphs", "paragraph_indices": [idx]},
+                                    "original": para_map[idx]["text"],
+                                    "revised": item["revised_text"],
+                                    "font_name": item.get("font_name"),
+                                    "font_size": item.get("font_size"),
+                                    "align": item.get("align"),
+                                    "bold": item.get("bold"),
+                                    "italic": item.get("italic"),
+                                    "underline": item.get("underline"),
+                                })
+                    elif name == "merge_selected_paragraphs":
+                        if ordered_indices:
+                            revisions.append({
+                                "scope": {"type": "merge_paragraphs", "paragraph_indices": ordered_indices},
+                                "original": selected_original,
+                                "revised": args["revised_text"],
+                                "font_name": args.get("font_name"),
+                                "font_size": args.get("font_size"),
+                                "align": args.get("align"),
+                                "bold": args.get("bold"),
+                                "italic": args.get("italic"),
+                                "underline": args.get("underline"),
+                            })
+                    elif name == "insert_paragraph_after_selection":
+                        revisions.append({
+                            "scope": {"type": "insert_paragraph", "paragraph_index": insert_after_index},
+                            "original": "",
+                            "revised": args["text"],
+                            "font_name": args.get("font_name"),
+                            "font_size": args.get("font_size"),
+                            "align": args.get("align"),
+                            "bold": args.get("bold"),
+                            "italic": args.get("italic"),
+                            "underline": args.get("underline"),
+                        })
+                    elif name == "revise_paragraph":
+                        idx = args["index"]
+                        if idx in para_map:
+                            revisions.append({
+                                "scope": {"type": "paragraphs", "paragraph_indices": [idx]},
+                                "original": para_map[idx]["text"],
+                                "revised": args["revised_text"],
+                                "font_name": args.get("font_name"),
+                                "font_size": args.get("font_size"),
+                                "align": args.get("align"),
+                                "bold": args.get("bold"),
+                                "italic": args.get("italic"),
+                                "underline": args.get("underline"),
+                            })
+                    elif name == "insert_paragraph":
+                        paragraph_index = args.get("paragraph_index", -1)
+                        if paragraph_index in selected_indices or paragraph_index == -1:
+                            revisions.append({
+                                "scope": {"type": "insert_paragraph", "paragraph_index": paragraph_index},
+                                "original": "",
+                                "revised": args["text"],
+                                "font_name": args.get("font_name"),
+                                "font_size": args.get("font_size"),
+                                "align": args.get("align"),
+                                "bold": args.get("bold"),
+                                "italic": args.get("italic"),
+                                "underline": args.get("underline"),
+                            })
+                    elif name == "delete_paragraph":
+                        idx = args["index"]
+                        if idx in para_map:
+                            revisions.append({
+                                "scope": {"type": "delete_paragraph", "paragraph_indices": [idx]},
+                                "original": para_map[idx]["text"],
+                                "revised": "",
+                            })
 
         elif req.scope.type == "table_cell":
             table_index = req.scope.table_index or 0
