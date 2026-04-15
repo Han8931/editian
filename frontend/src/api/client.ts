@@ -41,6 +41,7 @@ export async function reviseDocument(params: {
   scope: RevisionScope
   instruction: string
   llm: LLMConfig
+  current_slide?: number
 }): Promise<ReviseResponse> {
   const res = await fetch(`${BASE_URL}/api/revise`, {
     method: 'POST',
@@ -49,6 +50,7 @@ export async function reviseDocument(params: {
       file_id: params.file_id,
       scope: params.scope,
       instruction: params.instruction,
+      current_slide: params.current_slide,
       llm: {
         provider: params.llm.provider,
         base_url: params.llm.baseUrl,

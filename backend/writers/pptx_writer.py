@@ -2,10 +2,16 @@ import copy
 import shutil
 from typing import Any
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx import Presentation
 from pptx.util import Pt, Emu
 from pptx.oxml.ns import qn
 from lxml import etree
+
+# Placeholder types that are "title" shapes
+_TITLE_PH_TYPES = {PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE}
+# Placeholder types that are decorative/infrastructure (not content)
+_INFRA_PH_TYPES = {PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER}
 
 
 _ALIGN_MAP = {
@@ -70,6 +76,22 @@ def apply_pptx_revisions(
                     underline,
                     strike,
                 )
+            continue
+
+        if stype == "move_shape":
+            slide_idx = scope.get("slide_index")
+            shape_indices = scope.get("shape_indices") or []
+            new_left = scope.get("new_left")
+            new_top = scope.get("new_top")
+            if slide_idx is not None and slide_idx < len(prs.slides):
+                slide = prs.slides[slide_idx]
+                for shape_idx in shape_indices:
+                    if shape_idx < len(slide.shapes):
+                        s = slide.shapes[shape_idx]
+                        if new_left is not None:
+                            s.left = Emu(new_left)
+                        if new_top is not None:
+                            s.top = Emu(new_top)
             continue
 
         if stype == "delete_slide":
@@ -184,11 +206,30 @@ def _insert_blank_slide(prs: Any, after_index: int, title: str | None = None, bo
     new_slide = prs.slides.add_slide(layout)
 
     if want_content:
-        ph_map = {ph.placeholder_format.idx: ph for ph in new_slide.placeholders}
-        if title and 0 in ph_map:
-            ph_map[0].text_frame.text = title
-        if body and 1 in ph_map:
-            ph_map[1].text_frame.text = body
+        # Find title and body placeholders by TYPE, not by idx — idx varies across templates
+        title_ph = None
+        body_ph = None
+        for ph in new_slide.placeholders:
+            ptype = ph.placeholder_format.type
+            if ptype in _TITLE_PH_TYPES:
+                title_ph = ph
+            elif ptype not in _INFRA_PH_TYPES and body_ph is None:
+                body_ph = ph
+
+        if title and title_ph and title_ph.has_text_frame:
+            title_ph.text_frame.text = title
+        if body and body_ph and body_ph.has_text_frame:
+            body_ph.text_frame.text = body
+        elif body:
+            # No suitable body placeholder — add a text box in the lower two-thirds
+            _insert_text_box(
+                new_slide,
+                left_emu=457200,
+                top_emu=1600200,
+                width_emu=8229600,
+                height_emu=4300000,
+                text=body,
+            )
 
     # Move the new slide (appended to the end) to after_index + 1
     xml_slides = prs.slides._sldIdLst

@@ -11,10 +11,11 @@ function slideLabel(type: string): string {
   if (type === 'insert_slide') return 'Insert slide'
   if (type === 'delete_slide') return 'Delete slide'
   if (type === 'duplicate_slide') return 'Duplicate slide'
+  if (type === 'insert_text_box') return 'Add text box'
   return type
 }
 
-const STRUCTURAL_SLIDE_TYPES = new Set(['insert_slide', 'delete_slide', 'duplicate_slide'])
+const STRUCTURAL_SLIDE_TYPES = new Set(['insert_slide', 'delete_slide', 'duplicate_slide', 'insert_text_box'])
 
 export default function DiffViewer({ revision, index, onAccept, onReject }: Props) {
   const isStructural = STRUCTURAL_SLIDE_TYPES.has(revision.scope.type)
@@ -43,6 +44,11 @@ export default function DiffViewer({ revision, index, onAccept, onReject }: Prop
             {revision.scope.type === 'insert_slide' && revision.scope.slide_body && (
               <div className="mt-0.5 text-xs text-gray-600">
                 <span className="font-medium">Body:</span> {revision.scope.slide_body}
+              </div>
+            )}
+            {revision.scope.type === 'insert_text_box' && revision.revised && (
+              <div className="mt-1 text-xs text-gray-600">
+                <span className="font-medium">Text:</span> {revision.revised}
               </div>
             )}
           </div>

@@ -10,7 +10,7 @@ import editianLogo from '../../assets/editian_icon.svg'
 
 const SIDEBAR_MIN = 240
 const SIDEBAR_MAX = 600
-const SIDEBAR_DEFAULT = 320
+const SIDEBAR_DEFAULT = 380
 
 const WORKSPACE_MIN = 160
 const WORKSPACE_MAX = 380

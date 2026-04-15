@@ -33,6 +33,14 @@ const SUGGESTIONS = [
   'Stronger opening',
 ]
 
+const PPTX_SUGGESTIONS = [
+  'Add a new slide about',
+  'Make more concise',
+  'Fix grammar',
+  'More formal',
+  'Improve clarity',
+]
+
 function loadSavedLLM(): LLMConfig {
   try {
     const raw = localStorage.getItem('editian_llm')
@@ -80,7 +88,10 @@ export default function Sidebar({
         ? { type: 'table', slide_index: currentSlide, table_index: selectedTable }
         : { type: 'table', table_index: selectedTable }
     }
-    if (selectedIndices.length === 0) return { type: 'document' }
+    if (selectedIndices.length === 0) {
+      if (isPptx) return { type: 'slide', slide_index: currentSlide }
+      return { type: 'document' }
+    }
     if (isPptx) return { type: 'shape', slide_index: currentSlide, shape_indices: selectedIndices }
     return { type: 'paragraphs', paragraph_indices: selectedIndices }
   }
@@ -92,7 +103,7 @@ export default function Sidebar({
     setEditLoading(true)
     setEditError(null)
     try {
-      const result = await reviseDocument({ file_id: doc.file_id, scope: buildScope(), instruction, llm })
+      const result = await reviseDocument({ file_id: doc.file_id, scope: buildScope(), instruction, llm, current_slide: isPptx ? currentSlide : undefined })
       setRevisions(result.revisions)
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Revision failed.')
@@ -255,7 +266,7 @@ export default function Sidebar({
             <div className="flex items-start gap-2.5 rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5">
               <MousePointer size={13} className="text-gray-400 flex-shrink-0 mt-0.5" />
               <p className="text-xs text-gray-500 leading-relaxed">
-                Click or drag to select {isPptx ? 'shapes' : 'paragraphs'}. Without a selection, the whole {isPptx ? 'slide' : 'document'} is revised.
+                Click or drag to select {isPptx ? 'shapes' : 'paragraphs'}. Without a selection, the {isPptx ? 'current slide' : 'whole document'} is revised.
               </p>
             </div>
           )}
@@ -270,16 +281,27 @@ export default function Sidebar({
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleRevise() }}
             />
             {!instruction && (
-              <div className="flex flex-wrap gap-1.5">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setInstruction(s)}
-                    className="text-xs px-2.5 py-1 rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300 transition-colors"
-                  >
-                    {s}
-                  </button>
-                ))}
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {(isPptx ? PPTX_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setInstruction(s === 'Add a new slide about' ? 'Add a new slide about ' : s)}
+                      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                        s === 'Add a new slide about'
+                          ? 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300'
+                          : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300'
+                      }`}
+                    >
+                      {s === 'Add a new slide about' ? '+ ' + s + '…' : s}
+                    </button>
+                  ))}
+                </div>
+                {isPptx && (
+                  <p className="text-xs text-gray-400">
+                    Tip: you can ask to add a new slide, revise existing text, or change formatting.
+                  </p>
+                )}
               </div>
             )}
             <p className="text-xs text-gray-400">⌘ Enter to submit</p>
