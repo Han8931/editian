@@ -106,6 +106,9 @@ export default function Sidebar({
       const updated = await applyRevisions(doc.file_id, [revision])
       onDocumentUpdate(updated)
       setRevisions((prev) => prev.filter((r) => r !== revision))
+      if (revision.scope.type === 'insert_slide' && revision.scope.slide_index != null) {
+        onSlideChange(revision.scope.slide_index + 1)
+      }
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Failed to apply revision.')
     }
@@ -115,6 +118,11 @@ export default function Sidebar({
     try {
       const updated = await applyRevisions(doc.file_id, revisions)
       onDocumentUpdate(updated)
+      // Navigate to the last inserted slide if any
+      const lastInsert = [...revisions].reverse().find((r) => r.scope.type === 'insert_slide')
+      if (lastInsert?.scope.slide_index != null) {
+        onSlideChange(lastInsert.scope.slide_index + 1)
+      }
       setRevisions([])
     } catch (e) {
       setEditError(e instanceof Error ? e.message : 'Failed to apply revisions.')

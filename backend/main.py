@@ -170,7 +170,7 @@ class LLMConfig(BaseModel):
 
 
 class RevisionScope(BaseModel):
-    type: str  # document | paragraphs | slide | shape | table_cell | insert_table | insert_slide | delete_slide | duplicate_slide
+    type: str  # document | paragraphs | slide | shape | table_cell | insert_table | insert_slide | delete_slide | duplicate_slide | insert_text_box
     paragraph_indices: Optional[list[int]] = None
     slide_index: Optional[int] = None
     shape_indices: Optional[list[int]] = None
@@ -181,6 +181,14 @@ class RevisionScope(BaseModel):
     paragraph_index: Optional[int] = None   # insert after this paragraph (-1 = end)
     rows: Optional[int] = None
     cols: Optional[int] = None
+    # insert_text_box fields
+    text_box_left: Optional[int] = None     # EMU
+    text_box_top: Optional[int] = None      # EMU
+    text_box_width: Optional[int] = None    # EMU
+    text_box_height: Optional[int] = None   # EMU
+    # insert_slide with content fields
+    slide_title: Optional[str] = None
+    slide_body: Optional[str] = None
 
 
 class ReviseRequest(BaseModel):
@@ -271,6 +279,7 @@ _SYSTEM_PROMPT = (
     "unchanged in revised_text and set the relevant formatting parameters. Alignment changes should use align="
     "left, center, right, or justify. "
     "revised_text must be plain text only — never include HTML, XML, or any markup. "
+    "When the instruction asks to add or create a new slide, use the add_slide tool with a clear title and body. "
     "Do not add explanations."
 )
 
@@ -359,6 +368,26 @@ _REVISE_CELL_TOOL = _tool(
         **_FORMAT_PROPS,
     },
     ["row_index", "cell_index", "revised_text"],
+)
+
+_ADD_SLIDE_TOOL = _tool(
+    "add_slide",
+    "Insert a new slide with a title and body text after the specified slide index.",
+    {
+        "after_slide_index": {
+            "type": "integer",
+            "description": "Insert the new slide after this 0-based slide index. Use -1 to append at the end.",
+        },
+        "title": {
+            "type": "string",
+            "description": "Title text for the new slide.",
+        },
+        "body": {
+            "type": "string",
+            "description": "Body / content text for the new slide.",
+        },
+    },
+    ["after_slide_index", "title"],
 )
 
 _REVISE_SHAPE_TOOL = _tool(
@@ -508,7 +537,11 @@ async def _do_revise(req, file_type, file_path, llm):
                 f"[slide={s['index']},shape={sh['index']}] {sh['text']}"
                 for s in slides for sh in s["shapes"] if sh["text"].strip()
             )
-            calls = call_agent(f"Shapes:\n{shapes_text}\n\nInstruction: {req.instruction}", [_REVISE_SHAPE_TOOL])
+            num_slides = len(slides)
+            calls = call_agent(
+                f"Total slides: {num_slides}\nShapes:\n{shapes_text}\n\nInstruction: {req.instruction}",
+                [_REVISE_SHAPE_TOOL, _ADD_SLIDE_TOOL],
+            )
             shape_map = {(s["index"], sh["index"]): sh for s in slides for sh in s["shapes"]}
             for name, args in calls:
                 if name == "revise_shape":
@@ -525,6 +558,20 @@ async def _do_revise(req, file_type, file_path, llm):
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
                         })
+                elif name == "add_slide":
+                    after_idx = args.get("after_slide_index", -1)
+                    if after_idx < 0:
+                        after_idx = num_slides - 1
+                    revisions.append({
+                        "scope": {
+                            "type": "insert_slide",
+                            "slide_index": after_idx,
+                            "slide_title": args.get("title", ""),
+                            "slide_body": args.get("body", ""),
+                        },
+                        "original": "",
+                        "revised": "",
+                    })
 
         elif req.scope.type in ("slide", "shape"):
             slide_idx = req.scope.slide_index
@@ -539,11 +586,28 @@ async def _do_revise(req, file_type, file_path, llm):
 
             selected_set = {sh["index"] for sh in selected_shapes}
 
+            num_slides = len(slides)
+
+            def _handle_add_slide(args: dict) -> None:
+                after_idx = args.get("after_slide_index", -1)
+                if after_idx < 0:
+                    after_idx = num_slides - 1
+                revisions.append({
+                    "scope": {
+                        "type": "insert_slide",
+                        "slide_index": after_idx,
+                        "slide_title": args.get("title", ""),
+                        "slide_body": args.get("body", ""),
+                    },
+                    "original": "",
+                    "revised": "",
+                })
+
             if len(selected_shapes) == 1:
                 sh = selected_shapes[0]
                 # Include all other shapes on the slide as context
                 shapes_text = _shape_prompt(slide["shapes"], selected_set)
-                calls = call_agent(f"Shapes:\n{shapes_text}\n\nInstruction: {req.instruction}", [_REVISE_TEXT_TOOL])
+                calls = call_agent(f"Shapes:\n{shapes_text}\n\nInstruction: {req.instruction}", [_REVISE_TEXT_TOOL, _ADD_SLIDE_TOOL])
                 for name, args in calls:
                     if name == "revise_text":
                         revisions.append({
@@ -557,10 +621,12 @@ async def _do_revise(req, file_type, file_path, llm):
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
                         })
+                    elif name == "add_slide":
+                        _handle_add_slide(args)
             else:
                 # Include unselected shapes on the slide as context
                 shapes_text = _shape_prompt(slide["shapes"], selected_set)
-                calls = call_agent(f"Shapes:\n{shapes_text}\n\nInstruction: {req.instruction}", [_REVISE_SHAPE_TOOL])
+                calls = call_agent(f"Shapes:\n{shapes_text}\n\nInstruction: {req.instruction}", [_REVISE_SHAPE_TOOL, _ADD_SLIDE_TOOL])
                 shape_map = {sh["index"]: sh for sh in selected_shapes}
                 for name, args in calls:
                     if name == "revise_shape":
@@ -577,6 +643,8 @@ async def _do_revise(req, file_type, file_path, llm):
                             "italic": args.get("italic"),
                             "underline": args.get("underline"),
                             })
+                    elif name == "add_slide":
+                        _handle_add_slide(args)
 
         elif req.scope.type == "table_cell":
             slide_idx = req.scope.slide_index

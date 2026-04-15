@@ -43,7 +43,33 @@ def apply_pptx_revisions(
 
         # ── Slide-level structural operations ────────────────────────────────
         if stype == "insert_slide":
-            _insert_blank_slide(prs, scope.get("slide_index", len(prs.slides) - 1))
+            _insert_blank_slide(
+                prs,
+                scope.get("slide_index", len(prs.slides) - 1),
+                title=scope.get("slide_title"),
+                body=scope.get("slide_body"),
+            )
+            continue
+
+        if stype == "insert_text_box":
+            slide_idx = scope.get("slide_index")
+            if slide_idx is not None and slide_idx < len(prs.slides):
+                slide = prs.slides[slide_idx]
+                _insert_text_box(
+                    slide,
+                    scope.get("text_box_left", 100000),
+                    scope.get("text_box_top", 100000),
+                    scope.get("text_box_width", 200000),
+                    scope.get("text_box_height", 100000),
+                    revised_text or "New text box",
+                    font_name,
+                    font_size,
+                    align,
+                    bold,
+                    italic,
+                    underline,
+                    strike,
+                )
             continue
 
         if stype == "delete_slide":
@@ -120,20 +146,51 @@ def apply_pptx_revisions(
 
 # ── Slide structural helpers ──────────────────────────────────────────────────
 
-def _insert_blank_slide(prs: Any, after_index: int) -> None:
-    """Insert a new blank slide after *after_index*."""
-    # Pick the blank layout (layout index 6 is typically 'Blank', fallback to 0)
+def _insert_blank_slide(prs: Any, after_index: int, title: str | None = None, body: str | None = None) -> None:
+    """Insert a new slide after *after_index*.
+
+    If *title* or *body* is provided, a content layout with placeholders is used
+    and the title/body placeholder texts are populated.  Otherwise a blank layout
+    is chosen.
+    """
+    want_content = bool(title or body)
     layout = None
-    for candidate in prs.slide_layouts:
-        if candidate.name.lower() in ('blank', 'blank slide', 'leer'):
-            layout = candidate
-            break
+
+    if want_content:
+        # Look for a layout with both a title and a content/body placeholder
+        _CONTENT_NAMES = (
+            'title and content', 'title, content', 'titre et contenu',
+            'two content', 'comparison', 'title only',
+        )
+        for candidate in prs.slide_layouts:
+            if candidate.name.lower() in _CONTENT_NAMES:
+                layout = candidate
+                break
+        if layout is None:
+            # Any layout with ≥ 2 placeholders works
+            for candidate in prs.slide_layouts:
+                if len(candidate.placeholders) >= 2:
+                    layout = candidate
+                    break
+
     if layout is None:
-        layout = prs.slide_layouts[min(6, len(prs.slide_layouts) - 1)]
+        for candidate in prs.slide_layouts:
+            if candidate.name.lower() in ('blank', 'blank slide', 'leer'):
+                layout = candidate
+                break
+        if layout is None:
+            layout = prs.slide_layouts[min(6, len(prs.slide_layouts) - 1)]
 
     new_slide = prs.slides.add_slide(layout)
 
-    # Move the new slide (which was appended to the end) to after_index + 1
+    if want_content:
+        ph_map = {ph.placeholder_format.idx: ph for ph in new_slide.placeholders}
+        if title and 0 in ph_map:
+            ph_map[0].text_frame.text = title
+        if body and 1 in ph_map:
+            ph_map[1].text_frame.text = body
+
+    # Move the new slide (appended to the end) to after_index + 1
     xml_slides = prs.slides._sldIdLst
     slide_ids = list(xml_slides)
     new_id = slide_ids[-1]
@@ -187,6 +244,55 @@ def _duplicate_slide(prs: Any, index: int) -> None:
     new_id = slide_ids[-1]
     xml_slides.remove(new_id)
     xml_slides.insert(index + 1, new_id)
+
+
+def _insert_text_box(
+    slide: Any,
+    left_emu: int,
+    top_emu: int,
+    width_emu: int,
+    height_emu: int,
+    text: str,
+    font_name: str | None = None,
+    font_size: float | None = None,
+    align: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strike: bool | None = None,
+) -> None:
+    """Insert a new text box shape into the slide."""
+    from pptx.util import Emu as PptxEmu
+
+    shape = slide.shapes.add_textbox(
+        PptxEmu(left_emu),
+        PptxEmu(top_emu),
+        PptxEmu(width_emu),
+        PptxEmu(height_emu),
+    )
+
+    tf = shape.text_frame
+    tf.clear()  # Remove any default paragraphs
+
+    para = tf.paragraphs[0]
+    run = para.add_run()
+    run.text = text
+
+    # Apply formatting
+    if font_name is not None:
+        run.font.name = font_name
+    if font_size is not None:
+        run.font.size = Pt(font_size)
+    if bold is not None:
+        run.font.bold = bold
+    if italic is not None:
+        run.font.italic = italic
+    if underline is not None:
+        run.font.underline = underline
+    if strike is not None:
+        run.font.strike = strike
+    if align is not None and align in _ALIGN_MAP:
+        para.alignment = _ALIGN_MAP[align]
 
 
 # ── Text / formatting helpers ─────────────────────────────────────────────────

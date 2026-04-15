@@ -113,7 +113,7 @@ export interface Workspace {
 }
 
 export interface RevisionScope {
-  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table' | 'insert_slide' | 'delete_slide' | 'duplicate_slide'
+  type: 'document' | 'paragraphs' | 'slide' | 'shape' | 'table_cell' | 'table' | 'insert_table' | 'insert_slide' | 'delete_slide' | 'duplicate_slide' | 'insert_text_box'
   paragraph_indices?: number[]
   slide_index?: number
   shape_indices?: number[]
@@ -124,6 +124,14 @@ export interface RevisionScope {
   paragraph_index?: number   // insert after this paragraph (-1 = end of document)
   rows?: number
   cols?: number
+  // insert_text_box fields
+  text_box_left?: number     // EMU
+  text_box_top?: number      // EMU
+  text_box_width?: number    // EMU
+  text_box_height?: number   // EMU
+  // insert_slide with content fields
+  slide_title?: string
+  slide_body?: string
 }
 
 export interface Revision {

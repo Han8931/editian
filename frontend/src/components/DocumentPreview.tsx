@@ -15,6 +15,7 @@ import {
   Strikethrough,
   Table2,
   Trash2,
+  Type,
   Underline,
   Undo2,
 } from 'lucide-react'
@@ -713,6 +714,21 @@ export default function DocumentPreview({
     onSlideChange(currentSlide + 1)
   }
 
+  function insertTextBox() {
+    onDirectEdit?.({
+      scope: {
+        type: 'insert_text_box',
+        slide_index: currentSlide,
+        text_box_left: 100000,    // ~79px from left (default position)
+        text_box_top: 100000,     // ~79px from top (default position)
+        text_box_width: 200000,   // ~157px width
+        text_box_height: 100000,  // ~79px height
+      },
+      original: '',
+      revised: 'New text box',
+    })
+  }
+
   function insertTable(rows: number, cols: number) {
     setShowTablePicker(false)
     setTablePickerPos(null)
@@ -926,30 +942,42 @@ export default function DocumentPreview({
           )}
 
           {doc.file_type === 'pptx' && (
-            <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
-              <button
-                onMouseDown={(e) => { e.preventDefault(); insertSlide() }}
-                title="Insert slide after"
-                className={toolButtonClass}
-              >
-                <Plus size={15} />
-              </button>
-              <button
-                onMouseDown={(e) => { e.preventDefault(); duplicateSlide() }}
-                title="Duplicate slide"
-                className={toolButtonClass}
-              >
-                <Copy size={15} />
-              </button>
-              <button
-                onMouseDown={(e) => { e.preventDefault(); deleteSlide() }}
-                title="Delete slide"
-                className={`${toolButtonClass} hover:text-red-500`}
-                disabled={(doc.structure as import('../types').PptxStructure).slides.length <= 1}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
+            <>
+              <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+                <button
+                  onMouseDown={(e) => { e.preventDefault(); insertSlide() }}
+                  title="Insert slide after"
+                  className={toolButtonClass}
+                >
+                  <Plus size={15} />
+                </button>
+                <button
+                  onMouseDown={(e) => { e.preventDefault(); duplicateSlide() }}
+                  title="Duplicate slide"
+                  className={toolButtonClass}
+                >
+                  <Copy size={15} />
+                </button>
+                <button
+                  onMouseDown={(e) => { e.preventDefault(); deleteSlide() }}
+                  title="Delete slide"
+                  className={`${toolButtonClass} hover:text-red-500`}
+                  disabled={(doc.structure as import('../types').PptxStructure).slides.length <= 1}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+                <button
+                  onMouseDown={(e) => { e.preventDefault(); insertTextBox() }}
+                  title="Insert text box"
+                  className={toolButtonClass}
+                >
+                  <Type size={15} />
+                </button>
+              </div>
+            </>
           )}
 
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
