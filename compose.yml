@@ -1,0 +1,27 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend-runtime
+    ports:
+      - "${EDITIAN_FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-runtime
+    ports:
+      - "${EDITIAN_BACKEND_PORT:-8000}:8000"
+    environment:
+      STORAGE_BACKEND: local
+    volumes:
+      - editian_data:/root/.editian
+    restart: unless-stopped
+
+volumes:
+  editian_data:

@@ -45,6 +45,53 @@ Editian is a browser-based editor for `.docx`, `.pptx`, and markdown files. Uplo
 
 ## Quick Start
 
+### Docker
+
+If you want the easiest install path, use Docker Compose. The setup now runs separate frontend and backend containers:
+
+- `frontend`: nginx serving the built React app
+- `backend`: FastAPI + LibreOffice + Poppler for document editing and PPTX rendering
+
+To change the host ports, create a root `.env` file (next to `compose.yml`) like this:
+
+```bash
+EDITIAN_FRONTEND_PORT=3000
+EDITIAN_BACKEND_PORT=8000
+```
+
+```bash
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://localhost:3000
+```
+
+Notes:
+
+- Uploaded files and undo/redo history are stored in the `editian_data` Docker volume
+- The container includes LibreOffice and Poppler, so PPTX rendering uses the higher-fidelity slide image path
+- If you want S3-backed storage, add the relevant environment variables in `compose.yml`
+- LLM provider settings are still configured inside the app UI
+- If `EDITIAN_FRONTEND_PORT` is not set, Docker Compose uses `3000`
+- If `EDITIAN_BACKEND_PORT` is not set, Docker Compose uses `8000`
+- The browser should use the frontend port; nginx proxies `/api` to the backend container automatically
+- If you set `EDITIAN_FRONTEND_PORT=8080`, open `http://localhost:8080` instead
+
+To stop the app:
+
+```bash
+docker compose down
+```
+
+To also remove the persisted document volume:
+
+```bash
+docker compose down -v
+```
+
 ### 1. Start the backend
 
 Using `uv`:
@@ -189,6 +236,7 @@ STORAGE_BACKEND=local
 - Node.js 18+
 - `uv` or `pip`
 - An LLM provider such as Ollama or OpenAI
+- Docker Desktop or Docker Engine + Docker Compose, if using the container setup
 
 ## Notes
 
