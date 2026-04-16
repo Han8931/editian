@@ -75,7 +75,10 @@ function rangeOf(a: number, b: number): number[] {
 function resolvePreviewImageSrc(src?: string | null): string | undefined {
   if (!src) return undefined
   if (/^(data:|https?:\/\/|blob:)/i.test(src)) return src
-  return new URL(src, `${API_BASE_URL}/`).toString()
+  // Avoid new URL() with a bare '/' base — it throws in Firefox when API_BASE_URL is ''.
+  // Simple concatenation is correct: an empty API_BASE_URL means same-origin relative paths.
+  const path = src.startsWith('/') ? src : `/${src}`
+  return `${API_BASE_URL}${path}`
 }
 
 function shapeTransform(shape: { rotation?: number, flip_horizontal?: boolean, flip_vertical?: boolean }): string | undefined {
@@ -611,6 +614,7 @@ export default function DocumentPreview({
   const slideContainerRef = useRef<HTMLDivElement>(null)
   const [slideScale, setSlideScale] = useState(1)
   const [slideRenderStatus, setSlideRenderStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
+  const [lastLoadedSrc, setLastLoadedSrc] = useState<string | null>(null)
   const pptxStructure = doc.file_type === 'pptx' ? (doc.structure as import('../types').PptxStructure) : null
   const naturalW = pptxStructure ? pptxStructure.slide_width / 12700 : 960
   const naturalH = pptxStructure ? pptxStructure.slide_height / 12700 : 540
@@ -634,6 +638,11 @@ export default function DocumentPreview({
     if (doc.file_type !== 'pptx') return
     setSlideRenderStatus(slideRendererAvailable ? 'loading' : 'failed')
   }, [doc.file_type, doc.file_id, currentSlide, doc.slide_render_version, slideRendererAvailable])
+
+  // Clear the "previous slide" placeholder when a new file is loaded
+  useEffect(() => {
+    setLastLoadedSrc(null)
+  }, [doc.file_id])
 
   // Standard page height in px at 100% zoom: A4/Letter ≈ 11in × 96dpi = 1056px
   const PAGE_HEIGHT_PX = 1056
@@ -1436,12 +1445,35 @@ export default function DocumentPreview({
               borderRadius: 4,
             }}
           >
+            {/* Previously loaded slide — stays visible while the next one is fetching */}
+            {lastLoadedSrc && slideRenderStatus === 'loading' && (
+              <img
+                src={lastLoadedSrc}
+                alt=""
+                draggable={false}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'fill',
+                  zIndex: 0,
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  opacity: 0.35,
+                }}
+              />
+            )}
+            {/* Current slide image — fades in once loaded */}
             {renderedSlideImageSrc && slideRenderStatus !== 'failed' && (
               <img
                 src={renderedSlideImageSrc}
                 alt={`Slide ${currentSlide + 1}`}
                 draggable={false}
-                onLoad={() => setSlideRenderStatus('loaded')}
+                onLoad={() => {
+                  setSlideRenderStatus('loaded')
+                  setLastLoadedSrc(renderedSlideImageSrc)
+                }}
                 onError={() => setSlideRenderStatus('failed')}
                 style={{
                   position: 'absolute',
@@ -1453,6 +1485,7 @@ export default function DocumentPreview({
                   pointerEvents: 'none',
                   userSelect: 'none',
                   opacity: slideRenderStatus === 'loaded' ? 1 : 0,
+                  transition: 'opacity 0.15s ease',
                 }}
               />
             )}
