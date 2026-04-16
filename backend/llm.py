@@ -1,6 +1,9 @@
 import json
+import logging
 from openai import OpenAI, APITimeoutError
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def get_client(
@@ -59,6 +62,17 @@ def run_agent_loop(
             msg = choice.message
 
             if not msg.tool_calls:
+                # Log so the server console shows what went wrong
+                logger.warning(
+                    "LLM returned no tool calls (iteration %d). "
+                    "finish_reason=%s content=%r",
+                    i, choice.finish_reason, (msg.content or "")[:200],
+                )
+                print(
+                    f"[llm] WARNING: model produced no tool call on iteration {i}. "
+                    f"finish_reason={choice.finish_reason!r} "
+                    f"content={repr((msg.content or '')[:300])}"
+                )
                 break
 
             # Append the assistant turn (with tool_calls) to history
@@ -70,6 +84,7 @@ def run_agent_loop(
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     args = {}
+                print(f"[llm] tool_call: {tc.function.name}({json.dumps(args)[:200]})")
                 all_calls.append((tc.function.name, args))
                 messages.append({
                     "role": "tool",
