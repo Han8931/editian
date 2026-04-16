@@ -208,26 +208,37 @@ export default function Sidebar({
 
   async function handleChat() {
     const text = chatInput.trim()
-    if (!text) return
+    if (!text || chatLoading) return
     const scope = buildScope()
     const hasSelection = scope.type !== 'document'
     const userMsg: ChatMessage = { role: 'user', content: text }
     const nextMessages = [...chatMessages, userMsg]
-    setChatMessages(nextMessages)
+    // Add placeholder assistant message immediately so the bubble appears
+    const withPlaceholder: ChatMessage[] = [...nextMessages, { role: 'assistant', content: '' }]
+    setChatMessages(withPlaceholder)
     setChatInput('')
     setChatLoading(true)
     setChatError(null)
     try {
-      const reply = await chatWithDocument({
+      await chatWithDocument({
         file_id: doc.file_id,
         messages: nextMessages,
         llm,
         scope: hasSelection ? scope : undefined,
+        onChunk: (chunk) => {
+          setChatMessages((prev) => {
+            const updated = [...prev]
+            const last = updated[updated.length - 1]
+            if (last?.role === 'assistant') {
+              updated[updated.length - 1] = { ...last, content: last.content + chunk }
+            }
+            return updated
+          })
+        },
       })
-      setChatMessages([...nextMessages, { role: 'assistant', content: reply }])
     } catch (e) {
       setChatError(e instanceof Error ? e.message : 'Chat failed.')
-      setChatMessages(chatMessages)
+      setChatMessages(nextMessages) // remove empty placeholder on error
     } finally {
       setChatLoading(false)
     }
@@ -491,6 +502,9 @@ export default function Sidebar({
                     >
                       {msg.content}
                     </ReactMarkdown>
+                    {chatLoading && i === chatMessages.length - 1 && msg.content !== '' && (
+                      <span className="inline-block w-0.5 h-3.5 bg-gray-400 align-middle ml-0.5 animate-pulse" />
+                    )}
                   </div>
                 )}
                 {msg.role === 'assistant' && (
@@ -516,11 +530,12 @@ export default function Sidebar({
               </div>
             ))}
 
-            {chatLoading && (
-              <div className="flex items-start">
-                <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3.5 py-2.5 flex items-center gap-2">
-                  <Loader2 size={13} className="animate-spin text-gray-400" />
-                  <span className="text-sm text-gray-400">Thinking…</span>
+            {chatLoading && chatMessages[chatMessages.length - 1]?.role === 'assistant' && chatMessages[chatMessages.length - 1]?.content === '' && (
+              <div className="flex items-start -mt-2">
+                <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3.5 py-2.5 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce [animation-delay:0ms]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce [animation-delay:150ms]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce [animation-delay:300ms]" />
                 </div>
               </div>
             )}

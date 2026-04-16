@@ -8,7 +8,7 @@ import mimetypes
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -18,7 +18,7 @@ from parsers.docx_parser import parse_docx, get_docx_html, get_cell_text, get_ta
 from parsers.pptx_parser import parse_pptx, get_pptx_cell_text, get_pptx_table_cells
 from writers.docx_writer import apply_docx_revisions
 from writers.pptx_writer import apply_pptx_revisions
-from llm import run_agent_loop, run_chat, run_text_revision
+from llm import run_agent_loop, run_chat, run_text_revision, stream_chat
 from storage import S3DocumentStorage, StorageConfigError
 import slide_renderer
 
@@ -1348,22 +1348,28 @@ async def chat(req: ChatRequest):
             )
 
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
-
     llm = req.llm
-    try:
-        reply = run_chat(
-            system_prompt,
-            messages,
-            llm.provider,
-            llm.model,
-            llm.base_url,
-            llm.api_key,
-            llm.timeout,
-        )
-    except TimeoutError as e:
-        raise HTTPException(408, str(e))
 
-    return {"reply": reply}
+    def generate():
+        try:
+            for chunk in stream_chat(
+                system_prompt,
+                messages,
+                llm.provider,
+                llm.model,
+                llm.base_url,
+                llm.api_key,
+                llm.timeout,
+            ):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except TimeoutError as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ---------- Internal ----------

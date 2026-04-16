@@ -2,7 +2,7 @@ import json
 import re
 import logging
 from openai import OpenAI, APITimeoutError
-from typing import Optional
+from typing import Optional, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -243,3 +243,30 @@ def run_chat(
             f"The model took too long to respond (limit: {int(timeout)} s). "
             "Try a lighter model, or increase the timeout in settings."
         )
+
+
+def stream_chat(
+    system_prompt: str,
+    messages: list[dict],
+    provider: str,
+    model: str,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 120,
+) -> Generator[str, None, None]:
+    """
+    Stream a chat response token-by-token.
+    Yields plain text chunks as they arrive from the model.
+    """
+    client = get_client(provider, base_url, api_key)
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    stream = client.chat.completions.create(
+        model=model,
+        messages=full_messages,
+        timeout=timeout,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
