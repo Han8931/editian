@@ -9,6 +9,7 @@ import mimetypes
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import Optional
@@ -1373,3 +1374,11 @@ def _build_response(file_id: str) -> dict:
             "file_type": "pptx",
             "structure": parse_pptx(file_path, _pptx_asset_resolver(file_id)),
         }
+
+
+# ── Serve the built frontend (SPA) ──────────────────────────────────────────
+# This must come last so it doesn't shadow any /api/* routes above.
+# Build the frontend first: cd frontend && npm run build
+_FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
