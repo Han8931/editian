@@ -316,5 +316,4 @@ LOG_BACKUP_COUNT=30
 - All edits remain reviewable before you apply them
 
 ### Todos
-- Stream
-- 
+- Admin page
