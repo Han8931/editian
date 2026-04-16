@@ -1,4 +1,5 @@
 import json
+import re
 import logging
 from openai import OpenAI, APITimeoutError
 from typing import Optional
@@ -21,6 +22,76 @@ def get_client(
     else:
         # Any OpenAI-compatible endpoint (LM Studio, Groq, Together, etc.)
         return OpenAI(base_url=base_url, api_key=api_key or "none")
+
+
+def _extract_tool_calls_from_content(
+    content: str, tools: list[dict]
+) -> list[tuple[str, dict]]:
+    """
+    Fallback: some local models (Ollama, LM Studio) write a tool call as plain
+    text instead of returning structured tool_calls.  Try to recover it.
+
+    Handled patterns (in order of preference):
+      1. {"name": "tool_name", "arguments": {...}}
+      2. {"name": "tool_name", "parameters": {...}}
+      3. <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+      4. Raw args JSON whose keys match a known tool's required params
+    """
+    if not content:
+        return []
+
+    known_names = {t["function"]["name"]: t for t in tools}
+    results: list[tuple[str, dict]] = []
+
+    def _try_named(data: dict) -> bool:
+        name = data.get("name") or data.get("function") or data.get("tool_name")
+        if not isinstance(name, str) or name not in known_names:
+            return False
+        args = data.get("arguments") or data.get("parameters") or data.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+        results.append((name, args))
+        return True
+
+    # ── 1 & 2: whole content is a JSON object ──────────────────────────────
+    stripped = content.strip()
+    try:
+        data = json.loads(stripped)
+        if isinstance(data, dict):
+            if _try_named(data):
+                return results
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # ── 3: <tool_call>...</tool_call> tags ─────────────────────────────────
+    for m in re.finditer(r'<tool_call>(.*?)</tool_call>', content, re.DOTALL):
+        try:
+            data = json.loads(m.group(1).strip())
+            if isinstance(data, dict):
+                _try_named(data)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    if results:
+        return results
+
+    # ── 4: JSON blobs anywhere in the text ────────────────────────────────
+    for m in re.finditer(r'\{[^{}]*\}', content, re.DOTALL):
+        try:
+            data = json.loads(m.group())
+            if isinstance(data, dict):
+                # Named call?
+                if _try_named(data):
+                    break
+                # Raw args — check against required fields of each known tool
+                for tname, tdef in known_names.items():
+                    required = tdef["function"]["parameters"].get("required", [])
+                    if required and all(k in data for k in required):
+                        results.append((tname, data))
+                        break
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return results
 
 
 def run_agent_loop(
@@ -62,17 +133,18 @@ def run_agent_loop(
             msg = choice.message
 
             if not msg.tool_calls:
-                # Log so the server console shows what went wrong
-                logger.warning(
-                    "LLM returned no tool calls (iteration %d). "
-                    "finish_reason=%s content=%r",
-                    i, choice.finish_reason, (msg.content or "")[:200],
-                )
-                print(
-                    f"[llm] WARNING: model produced no tool call on iteration {i}. "
-                    f"finish_reason={choice.finish_reason!r} "
-                    f"content={repr((msg.content or '')[:300])}"
-                )
+                content = msg.content or ""
+                # Some models write tool calls as plain text — try to recover
+                recovered = _extract_tool_calls_from_content(content, tools)
+                if recovered:
+                    print(f"[llm] recovered {len(recovered)} tool call(s) from content text")
+                    all_calls.extend(recovered)
+                else:
+                    print(
+                        f"[llm] WARNING: model produced no tool call on iteration {i}. "
+                        f"finish_reason={choice.finish_reason!r} "
+                        f"content={repr(content[:300])}"
+                    )
                 break
 
             # Append the assistant turn (with tool_calls) to history
@@ -126,5 +198,5 @@ def run_chat(
     except APITimeoutError:
         raise TimeoutError(
             f"The model took too long to respond (limit: {int(timeout)} s). "
-            "Try a lighter model, or increase the timeout in Settings."
+            "Try a lighter model, or increase the timeout in settings."
         )
