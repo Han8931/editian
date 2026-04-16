@@ -1,10 +1,13 @@
 """Render PPTX slides to PNG using LibreOffice headless."""
+import logging
 import shutil
 import subprocess
 import tempfile
 import threading
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _SOFFICE_CANDIDATES = (
     shutil.which("soffice"),
@@ -76,6 +79,11 @@ def _run_convert_to_pdf(soffice: str, file_path: str, outdir: Path, profile_dir:
         check=False,
     )
     if result.returncode != 0:
+        logger.warning(
+            "libreoffice pdf conversion failed file=%s stderr=%s",
+            file_path,
+            result.stderr.decode("utf-8", errors="ignore")[:400],
+        )
         return None
     pdfs = sorted(outdir.glob("*.pdf"))
     return pdfs[0] if pdfs else None
@@ -97,6 +105,11 @@ def _render_pdf_pages_to_pngs(pdf_path: Path, pdftoppm: str, output_dir: Path) -
         check=False,
     )
     if result.returncode != 0:
+        logger.warning(
+            "pdftoppm render failed pdf=%s stderr=%s",
+            pdf_path,
+            result.stderr.decode("utf-8", errors="ignore")[:400],
+        )
         return 0
 
     rendered = 0
@@ -154,6 +167,11 @@ def _render_via_png(file_path: str, output_dir: Path, soffice: str) -> int:
             check=False,
         )
         if result.returncode != 0:
+            logger.warning(
+                "libreoffice png conversion failed file=%s stderr=%s",
+                file_path,
+                result.stderr.decode("utf-8", errors="ignore")[:400],
+            )
             return 0
 
         pngs = sorted(lo_out.glob("*.png"), key=lambda path: path.name)
@@ -172,15 +190,21 @@ def render_all(file_path: str, output_dir: Path) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     soffice = _find_soffice()
     if not soffice:
+        logger.debug("slide rendering unavailable because soffice was not found")
         return 0
 
     pdftoppm = _find_pdftoppm()
     if pdftoppm:
         rendered = _render_via_pdf(file_path, output_dir, soffice, pdftoppm)
         if rendered > 0:
+            logger.info("rendered slides via libreoffice pdf file=%s count=%d", file_path, rendered)
             return rendered
+        logger.warning("pdf slide render path failed, falling back to libreoffice png file=%s", file_path)
 
-    return _render_via_png(file_path, output_dir, soffice)
+    rendered = _render_via_png(file_path, output_dir, soffice)
+    if rendered > 0:
+        logger.info("rendered slides via libreoffice png file=%s count=%d", file_path, rendered)
+    return rendered
 
 
 def get_or_render(file_path: str, slide_idx: int, output_dir: Path) -> Optional[Path]:
@@ -195,6 +219,7 @@ def get_or_render(file_path: str, slide_idx: int, output_dir: Path) -> Optional[
         try:
             render_all(file_path, output_dir)
         except Exception:
+            logger.exception("slide render crashed file=%s output_dir=%s", file_path, output_dir)
             return None
 
     return target if target.exists() else None

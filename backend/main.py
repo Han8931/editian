@@ -2,11 +2,13 @@ import uuid
 import json
 import shutil
 import hashlib
+import logging
+import time
 from pathlib import Path
 import os
 import mimetypes
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,8 +23,13 @@ from writers.docx_writer import apply_docx_revisions
 from writers.markdown_writer import apply_markdown_revisions
 from writers.pptx_writer import apply_pptx_revisions
 from llm import run_agent_loop, run_chat, run_text_revision, stream_chat
+from logging_config import get_request_id, reset_request_id, set_request_id, setup_logging
 from storage import S3DocumentStorage, StorageConfigError
 import slide_renderer
+
+load_dotenv(Path(__file__).with_name(".env"))
+setup_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Editian")
 
@@ -42,12 +49,13 @@ SLIDES_DIR = FILES_DIR.parent / "slide_images"
 SLIDES_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_FILE = FILES_DIR.parent / "registry.json"
 
-load_dotenv(Path(__file__).with_name(".env"))
 _storage_backend = os.getenv("STORAGE_BACKEND", "local").strip().lower()
 try:
     _storage: S3DocumentStorage | StorageConfigError = S3DocumentStorage.from_env()
 except StorageConfigError as exc:
     _storage = exc
+    if _storage_backend == "s3":
+        logger.warning("s3 storage backend configured but unavailable error=%s", exc)
 
 # In-memory file registry {file_id: {path, type, name}}
 _files: dict = {}
@@ -86,10 +94,17 @@ def _load_registry() -> None:
             if valid:
                 _redo_stacks[fid] = valid
     except Exception:
-        pass  # corrupt registry — start fresh
+        logger.exception("failed to load registry path=%s", REGISTRY_FILE)
 
 
 _load_registry()
+logger.info(
+    "backend initialized storage_backend=%s tracked_files=%d slide_renderer_available=%s slide_renderer_backend=%s",
+    _storage_backend,
+    len(_files),
+    slide_renderer.is_available(),
+    slide_renderer.backend_name(),
+)
 
 
 def _push_snapshot(file_id: str) -> None:
@@ -121,6 +136,7 @@ def _ensure_local_file(file_id: str) -> str:
         s3_key = info.get("s3_key")
         if not s3_key:
             raise HTTPException(500, "File is missing an S3 key.")
+        logger.info("restoring local file from s3 file_id=%s key=%s", file_id, s3_key)
         storage.download_file(s3_key, path)
     return str(path)
 
@@ -134,6 +150,7 @@ def _sync_file_to_remote(file_id: str) -> None:
     s3_key = info.get("s3_key")
     if not s3_key:
         raise HTTPException(500, "File is missing an S3 key.")
+    logger.debug("syncing file to s3 file_id=%s key=%s", file_id, s3_key)
     storage.upload_file(local_path, s3_key)
 
 
@@ -246,6 +263,34 @@ def _invalidate_slide_cache(file_id: str) -> None:
 
 # ---------- Routes ----------
 
+@app.middleware("http")
+async def bind_request_logging_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    token = set_request_id(request_id)
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        logger.debug(
+            "request completed method=%s path=%s status_code=%s duration_ms=%.1f",
+            request.method,
+            request.url.path,
+            response.status_code,
+            (time.perf_counter() - start) * 1000,
+        )
+        return response
+    except Exception:
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.exception(
+            "unhandled request error method=%s path=%s duration_ms=%.1f",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+    finally:
+        reset_request_id(token)
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     ext = Path(file.filename).suffix.lower()
@@ -254,7 +299,8 @@ async def upload_file(file: UploadFile = File(...)):
 
     file_id = str(uuid.uuid4())
     file_path = FILES_DIR / f"{file_id}{ext}"
-    file_path.write_bytes(await file.read())
+    payload = await file.read()
+    file_path.write_bytes(payload)
     file_type = "markdown" if ext in (".md", ".markdown") else ext[1:]
     file_info = {"path": str(file_path), "type": file_type, "name": file.filename}
     if _storage_backend == "s3":
@@ -269,11 +315,24 @@ async def upload_file(file: UploadFile = File(...)):
     try:
         response = _build_response(file_id)
     except Exception as exc:
+        logger.exception(
+            "upload parse failed file_id=%s name=%s file_type=%s",
+            file_id,
+            file.filename,
+            file_type,
+        )
         _files.pop(file_id, None)
         Path(file_info["path"]).unlink(missing_ok=True)
         shutil.rmtree(ASSETS_DIR / file_id, ignore_errors=True)
         raise HTTPException(422, f"Failed to parse uploaded {ext[1:]} file: {exc}") from exc
 
+    logger.info(
+        "upload succeeded file_id=%s name=%s file_type=%s size_bytes=%d",
+        file_id,
+        file.filename,
+        file_type,
+        len(payload),
+    )
     _save_registry()
     return response
 
@@ -285,8 +344,27 @@ async def revise(req: ReviseRequest):
     file_path = _ensure_local_file(req.file_id)
     llm = req.llm
     try:
-        return await _do_revise(req, file_type, file_path, llm)
+        response = await _do_revise(req, file_type, file_path, llm)
+        logger.info(
+            "revisions generated file_id=%s file_type=%s scope=%s count=%d provider=%s model=%s",
+            req.file_id,
+            file_type,
+            req.scope.type,
+            len(response["revisions"]),
+            llm.provider,
+            llm.model,
+        )
+        return response
     except TimeoutError as e:
+        logger.warning(
+            "revision timed out file_id=%s file_type=%s scope=%s provider=%s model=%s timeout=%s",
+            req.file_id,
+            file_type,
+            req.scope.type,
+            llm.provider,
+            llm.model,
+            llm.timeout,
+        )
         raise HTTPException(408, str(e))
 
 
@@ -1137,6 +1215,12 @@ async def apply(req: ApplyRequest):
     _sync_file_to_remote(req.file_id)
     _invalidate_slide_cache(req.file_id)
     _save_registry()
+    logger.info(
+        "revisions applied file_id=%s file_type=%s count=%d",
+        req.file_id,
+        file_type,
+        len(rev_dicts),
+    )
     return _build_response(req.file_id)
 
 
@@ -1158,6 +1242,7 @@ async def undo(file_id: str):
     _sync_file_to_remote(file_id)
     _invalidate_slide_cache(file_id)
     _save_registry()
+    logger.info("undo completed file_id=%s file_type=%s", file_id, info["type"])
     return _build_response(file_id)
 
 
@@ -1179,6 +1264,7 @@ async def redo(file_id: str):
     _sync_file_to_remote(file_id)
     _invalidate_slide_cache(file_id)
     _save_registry()
+    logger.info("redo completed file_id=%s file_type=%s", file_id, info["type"])
     return _build_response(file_id)
 
 
@@ -1186,6 +1272,7 @@ async def redo(file_id: str):
 async def download(file_id: str):
     info = _get_file(file_id)
     _sync_file_to_remote(file_id)
+    logger.info("download requested file_id=%s file_type=%s", file_id, info["type"])
     return FileResponse(
         _ensure_local_file(file_id),
         filename=f"revised_{info['name']}",
@@ -1219,6 +1306,12 @@ async def get_slide_image(file_id: str, slide_idx: int):
 
     png_path = slide_renderer.get_or_render(file_path, slide_idx, cache_dir)
     if png_path is None or not png_path.exists():
+        logger.warning(
+            "slide image render failed file_id=%s slide_idx=%s backend=%s",
+            file_id,
+            slide_idx,
+            slide_renderer.backend_name(),
+        )
         raise HTTPException(404, "Slide image could not be rendered.")
 
     return FileResponse(
@@ -1257,13 +1350,16 @@ async def branch_file(file_id: str):
         file_info["s3_key"] = s3_key
     _files[new_id] = file_info
     _save_registry()
+    logger.info("branch created source_file_id=%s new_file_id=%s file_type=%s", file_id, new_id, info["type"])
     return _build_response(new_id)
 
 
 @app.delete("/api/files/{file_id}")
 async def delete_file(file_id: str):
+    deleted_type = None
     if file_id in _files:
         info = _files[file_id]
+        deleted_type = info["type"]
         Path(info["path"]).unlink(missing_ok=True)
         s3_key = info.get("s3_key")
         if _storage_backend == "s3" and s3_key and not isinstance(_storage, StorageConfigError):
@@ -1276,6 +1372,7 @@ async def delete_file(file_id: str):
     shutil.rmtree(ASSETS_DIR / file_id, ignore_errors=True)
     _invalidate_slide_cache(file_id)
     _save_registry()
+    logger.info("file deleted file_id=%s file_type=%s", file_id, deleted_type or "unknown")
     return {"ok": True}
 
 
@@ -1398,8 +1495,19 @@ async def chat(req: ChatRequest):
 
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
     llm = req.llm
+    request_id = get_request_id()
+    logger.info(
+        "chat started file_id=%s file_type=%s messages=%d provider=%s model=%s preferred_language=%s",
+        req.file_id,
+        file_type,
+        len(messages),
+        llm.provider,
+        llm.model,
+        req.preferred_language or "default",
+    )
 
     def generate():
+        token = set_request_id(request_id)
         try:
             for chunk in stream_chat(
                 system_prompt,
@@ -1412,9 +1520,24 @@ async def chat(req: ChatRequest):
             ):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except TimeoutError as e:
+            logger.warning(
+                "chat timed out file_id=%s provider=%s model=%s timeout=%s",
+                req.file_id,
+                llm.provider,
+                llm.model,
+                llm.timeout,
+            )
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         except Exception as e:
+            logger.exception(
+                "chat failed file_id=%s provider=%s model=%s",
+                req.file_id,
+                llm.provider,
+                llm.model,
+            )
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            reset_request_id(token)
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",

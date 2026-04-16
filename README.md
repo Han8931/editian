@@ -57,6 +57,15 @@ To change the host ports, create a root `.env` file (next to `compose.yml`) like
 ```bash
 EDITIAN_FRONTEND_PORT=3000
 EDITIAN_BACKEND_PORT=8000
+EDITIAN_LOG_LEVEL=INFO
+EDITIAN_LOG_FORMAT=text
+EDITIAN_LOG_TO_FILE=true
+EDITIAN_LOG_DIR=/root/.editian/logs
+EDITIAN_LOG_FILE_NAME=backend.log
+EDITIAN_LOG_ROTATION_WHEN=midnight
+EDITIAN_LOG_ROTATION_INTERVAL=1
+EDITIAN_LOG_BACKUP_COUNT=14
+EDITIAN_LOG_ROTATION_UTC=false
 ```
 
 ```bash
@@ -79,6 +88,8 @@ Notes:
 - If `EDITIAN_BACKEND_PORT` is not set, Docker Compose uses `8000`
 - The browser should use the frontend port; nginx proxies `/api` to the backend container automatically
 - If you set `EDITIAN_FRONTEND_PORT=8080`, open `http://localhost:8080` instead
+- Set `EDITIAN_LOG_FORMAT=json` if you want structured container logs
+- Backend logs are also written to `/root/.editian/logs/backend.log` inside the backend container by default
 
 To stop the app:
 
@@ -228,6 +239,66 @@ For local-only storage:
 
 ```bash
 STORAGE_BACKEND=local
+```
+
+## Logging
+
+The backend logs to both:
+
+- stdout, so you can watch it in the terminal or with `docker compose logs -f backend`
+- a rotating log file
+
+These settings control the logger:
+
+```bash
+LOG_LEVEL=INFO
+LOG_FORMAT=text
+LOG_TO_FILE=true
+LOG_DIR=~/.editian/logs
+LOG_FILE_NAME=backend.log
+LOG_ROTATION_WHEN=midnight
+LOG_ROTATION_INTERVAL=1
+LOG_BACKUP_COUNT=14
+LOG_ROTATION_UTC=false
+```
+
+`LOG_FORMAT` can be `text` or `json`.
+`LOG_ROTATION_WHEN` can be `s`, `m`, `h`, `d`, `midnight`, or `w0` through `w6`.
+
+Default log file locations:
+
+- local runs: `~/.editian/logs/backend.log`
+- Docker backend container: `/root/.editian/logs/backend.log`
+
+For local development, put those variables in `backend/.env`.
+
+For Docker Compose, set these in the root `.env` instead:
+
+```bash
+EDITIAN_LOG_LEVEL=INFO
+EDITIAN_LOG_FORMAT=text
+EDITIAN_LOG_TO_FILE=true
+EDITIAN_LOG_DIR=/root/.editian/logs
+EDITIAN_LOG_FILE_NAME=backend.log
+EDITIAN_LOG_ROTATION_WHEN=midnight
+EDITIAN_LOG_ROTATION_INTERVAL=1
+EDITIAN_LOG_BACKUP_COUNT=14
+EDITIAN_LOG_ROTATION_UTC=false
+```
+
+Examples:
+
+```bash
+# rotate every day
+LOG_ROTATION_WHEN=midnight
+LOG_ROTATION_INTERVAL=1
+
+# rotate every 6 hours
+LOG_ROTATION_WHEN=h
+LOG_ROTATION_INTERVAL=6
+
+# keep 30 rotated files
+LOG_BACKUP_COUNT=30
 ```
 
 ## Requirements

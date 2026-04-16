@@ -176,7 +176,11 @@ def _build_agent(
         if response.tool_calls:
             for tc in response.tool_calls:
                 args = tc.get("args", {})
-                print(f"[langgraph] tool_call: {tc['name']}({json.dumps(args)[:200]})")
+                logger.info(
+                    "agent tool_call name=%s args_preview=%s",
+                    tc["name"],
+                    json.dumps(args)[:200],
+                )
                 new_calls.append((tc["name"], args))
                 new_messages.append(
                     ToolMessage(
@@ -188,12 +192,16 @@ def _build_agent(
             content = response.content or ""
             recovered = _extract_tool_calls_from_content(content, tools)
             if recovered:
-                print(f"[langgraph] recovered {len(recovered)} tool call(s) from content")
+                logger.info(
+                    "recovered tool calls from content count=%d",
+                    len(recovered),
+                )
                 new_calls.extend(recovered)
             else:
-                print(
-                    f"[langgraph] WARNING: no tool call on iteration {state['iteration']}. "
-                    f"content={repr(content[:300])}"
+                logger.warning(
+                    "model returned no tool call iteration=%s content_preview=%r",
+                    state["iteration"],
+                    content[:300],
                 )
 
         return {
@@ -283,7 +291,7 @@ def run_text_revision(
     try:
         response = lm.invoke(messages)
         result = (response.content or "").strip()
-        print(f"[llm] text_revision fallback result: {repr(result[:200])}")
+        logger.debug("text revision fallback result preview=%r", result[:200])
         return result
     except Exception as e:
         if _is_timeout(e):

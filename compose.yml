@@ -19,6 +19,15 @@ services:
       - "${EDITIAN_BACKEND_PORT:-8000}:8000"
     environment:
       STORAGE_BACKEND: local
+      LOG_LEVEL: ${EDITIAN_LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${EDITIAN_LOG_FORMAT:-text}
+      LOG_TO_FILE: ${EDITIAN_LOG_TO_FILE:-true}
+      LOG_DIR: ${EDITIAN_LOG_DIR:-/root/.editian/logs}
+      LOG_FILE_NAME: ${EDITIAN_LOG_FILE_NAME:-backend.log}
+      LOG_ROTATION_WHEN: ${EDITIAN_LOG_ROTATION_WHEN:-midnight}
+      LOG_ROTATION_INTERVAL: ${EDITIAN_LOG_ROTATION_INTERVAL:-1}
+      LOG_BACKUP_COUNT: ${EDITIAN_LOG_BACKUP_COUNT:-14}
+      LOG_ROTATION_UTC: ${EDITIAN_LOG_ROTATION_UTC:-false}
     volumes:
       - editian_data:/root/.editian
     restart: unless-stopped
