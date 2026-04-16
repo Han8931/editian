@@ -540,6 +540,14 @@ async def _do_revise(req, file_type, file_path, llm):
             )
             calls = call_agent(prompt, [_REVISE_PARAGRAPH_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL])
             para_map = {p["index"]: p for p in paragraphs}
+            if not calls:
+                # Fallback: revise every non-empty paragraph individually
+                for _p in paragraphs:
+                    if not _p["text"].strip():
+                        continue
+                    _revised = text_fallback(_p["text"])
+                    if _revised and _revised.strip() != _p["text"].strip():
+                        calls.append(("revise_paragraph", {"index": _p["index"], "revised_text": _revised}))
             for name, args in calls:
                 if name == "revise_paragraph":
                     idx = args["index"]
@@ -656,6 +664,19 @@ async def _do_revise(req, file_type, file_path, llm):
                         _DELETE_PARAGRAPH_TOOL,
                     ],
                 )
+                if not calls:
+                    _merge_kw = {"merge", "combine", "join", "concatenate", "fuse", "blend", "consolidate", "unify"}
+                    if any(kw in req.instruction.lower() for kw in _merge_kw):
+                        # Merge intent: produce one merged paragraph
+                        revised = text_fallback(selected_original)
+                        if revised and ordered_indices:
+                            calls = [("merge_selected_paragraphs", {"revised_text": revised})]
+                    else:
+                        # Revise intent: revise each selected paragraph individually
+                        for _idx in ordered_indices:
+                            _revised = text_fallback(para_map[_idx]["text"])
+                            if _revised:
+                                calls.append(("revise_paragraph", {"index": _idx, "revised_text": _revised}))
                 for name, args in calls:
                     if name == "revise_paragraphs_batch":
                         for item in args.get("revisions", []):
