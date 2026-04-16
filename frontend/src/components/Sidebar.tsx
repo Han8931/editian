@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
-import { Settings2, ArrowLeft, Sparkles, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check } from 'lucide-react'
+import { Settings2, ArrowLeft, Sparkles, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check, RotateCcw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage } from '../types'
@@ -239,6 +239,42 @@ export default function Sidebar({
     } catch (e) {
       setChatError(e instanceof Error ? e.message : 'Chat failed.')
       setChatMessages(nextMessages) // remove empty placeholder on error
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  async function handleRetry() {
+    // Find the last user message — drop everything from the last assistant message onward
+    const lastUserIdx = [...chatMessages].map(m => m.role).lastIndexOf('user')
+    if (lastUserIdx === -1 || chatLoading) return
+    const messagesUpToUser = chatMessages.slice(0, lastUserIdx + 1)
+    const withPlaceholder: ChatMessage[] = [...messagesUpToUser, { role: 'assistant', content: '' }]
+    setChatMessages(withPlaceholder)
+    setChatLoading(true)
+    setChatError(null)
+    const scope = buildScope()
+    const hasSelection = scope.type !== 'document'
+    try {
+      await chatWithDocument({
+        file_id: doc.file_id,
+        messages: messagesUpToUser,
+        llm,
+        scope: hasSelection ? scope : undefined,
+        onChunk: (chunk) => {
+          setChatMessages((prev) => {
+            const updated = [...prev]
+            const last = updated[updated.length - 1]
+            if (last?.role === 'assistant') {
+              updated[updated.length - 1] = { ...last, content: last.content + chunk }
+            }
+            return updated
+          })
+        },
+      })
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : 'Chat failed.')
+      setChatMessages(messagesUpToUser)
     } finally {
       setChatLoading(false)
     }
@@ -525,6 +561,16 @@ export default function Sidebar({
                       <PenLine size={11} />
                       Use as instruction
                     </button>
+                    {i === chatMessages.length - 1 && !chatLoading && (
+                      <button
+                        onClick={handleRetry}
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                        title="Retry"
+                      >
+                        <RotateCcw size={11} />
+                        Retry
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
