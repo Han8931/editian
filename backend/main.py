@@ -18,7 +18,7 @@ from parsers.docx_parser import parse_docx, get_docx_html, get_cell_text, get_ta
 from parsers.pptx_parser import parse_pptx, get_pptx_cell_text, get_pptx_table_cells
 from writers.docx_writer import apply_docx_revisions
 from writers.pptx_writer import apply_pptx_revisions
-from llm import run_agent_loop, run_chat
+from llm import run_agent_loop, run_chat, run_text_revision
 from storage import S3DocumentStorage, StorageConfigError
 import slide_renderer
 
@@ -514,6 +514,13 @@ async def _do_revise(req, file_type, file_path, llm):
             llm.timeout,
         )
 
+    def text_fallback(original: str) -> str:
+        """Fallback for models that can't produce tool calls: get revised text directly."""
+        return run_text_revision(
+            original, req.instruction,
+            llm.provider, llm.model, llm.base_url, llm.api_key, llm.timeout,
+        )
+
     revisions = []
 
     if file_type == "docx":
@@ -585,6 +592,10 @@ async def _do_revise(req, file_type, file_path, llm):
                     "To add a new paragraph near it, call insert_paragraph after that numeric index."
                 )
                 calls = call_agent(prompt, [_REVISE_TEXT_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL])
+                if not calls:
+                    revised = text_fallback(para["text"])
+                    if revised:
+                        calls = [("revise_text", {"revised_text": revised})]
                 for name, args in calls:
                     if name == "revise_text":
                         revisions.append({
@@ -742,6 +753,10 @@ async def _do_revise(req, file_type, file_path, llm):
                     f"Instruction: {req.instruction}"
                 )
                 calls = call_agent(prompt, [_REVISE_TEXT_TOOL])
+                if not calls:
+                    revised = text_fallback(cell_text)
+                    if revised:
+                        calls = [("revise_text", {"revised_text": revised})]
                 for name, args in calls:
                     if name == "revise_text":
                         revisions.append({
@@ -937,6 +952,10 @@ async def _do_revise(req, file_type, file_path, llm):
                 sh = selected_shapes[0]
                 shapes_text = _shape_prompt(slide["shapes"], selected_set)
                 calls = call_agent(f"Shapes:\n{shapes_text}\n\nInstruction: {req.instruction}{_edit_hint}", [_REVISE_TEXT_TOOL, _ADD_SLIDE_TOOL, _ADD_TEXT_BOX_TOOL])
+                if not calls:
+                    revised = text_fallback(sh["text"])
+                    if revised:
+                        calls = [("revise_text", {"revised_text": revised})]
                 for name, args in calls:
                     if name == "revise_text":
                         revisions.append({
@@ -1002,6 +1021,10 @@ async def _do_revise(req, file_type, file_path, llm):
                 f"Instruction: {req.instruction}"
             )
             calls = call_agent(prompt, [_REVISE_TEXT_TOOL])
+            if not calls:
+                revised = text_fallback(cell_text)
+                if revised:
+                    calls = [("revise_text", {"revised_text": revised})]
             for name, args in calls:
                 if name == "revise_text":
                     revisions.append({

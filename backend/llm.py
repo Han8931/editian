@@ -173,6 +173,49 @@ def run_agent_loop(
     return all_calls
 
 
+def run_text_revision(
+    original_text: str,
+    instruction: str,
+    provider: str,
+    model: str,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 120,
+) -> str:
+    """
+    Tool-free fallback for models that can't produce structured tool calls.
+    Ask the model to output the revised text directly as plain text.
+    """
+    client = get_client(provider, base_url, api_key)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a text editor. Apply the instruction to the given text. "
+                        "Output ONLY the revised text. "
+                        "No explanation. No quotes around the output. No markdown."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Text:\n{original_text}\n\nInstruction: {instruction}",
+                },
+            ],
+            timeout=timeout,
+        )
+        result = (response.choices[0].message.content or "").strip()
+        print(f"[llm] text_revision fallback result: {repr(result[:200])}")
+        return result
+    except APITimeoutError:
+        raise TimeoutError(
+            f"The model took too long to respond (limit: {int(timeout)} s). "
+            "Try a lighter model, or increase the timeout in Settings."
+        )
+
+
 def run_chat(
     system_prompt: str,
     messages: list[dict],
