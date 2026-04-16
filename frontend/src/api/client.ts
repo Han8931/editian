@@ -1,6 +1,9 @@
 import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage } from '../types'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// In production use a reverse proxy that routes /api → backend.
+// In development Vite proxies /api → localhost:8000 (see vite.config.ts).
+// VITE_API_URL can still override both (e.g. for a remote dev backend).
+const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 const UPLOAD_TIMEOUT_MS = 60_000
 
 async function apiError(res: Response): Promise<Error> {

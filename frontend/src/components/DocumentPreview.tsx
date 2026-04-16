@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import type { UploadResponse, PptxStructure, DocxStructure, Revision, ParagraphAlign, Shape } from '../types'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 interface CellRef { t: number; r: number; c: number }
 
