@@ -1,4 +1,4 @@
-import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage } from '../types'
+import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage, LanguageCode } from '../types'
 
 // In production use a reverse proxy that routes /api → backend.
 // In development Vite proxies /api → localhost:8000 (see vite.config.ts).
@@ -45,6 +45,7 @@ export async function reviseDocument(params: {
   instruction: string
   llm: LLMConfig
   current_slide?: number
+  preferred_language?: LanguageCode
 }): Promise<ReviseResponse> {
   const res = await fetch(`${BASE_URL}/api/revise`, {
     method: 'POST',
@@ -61,6 +62,7 @@ export async function reviseDocument(params: {
         model: params.llm.model,
         timeout: params.llm.timeout,
       },
+      preferred_language: params.preferred_language,
     }),
   })
   if (!res.ok) throw await apiError(res)
@@ -113,6 +115,7 @@ export async function chatWithDocument(params: {
   messages: ChatMessage[]
   llm: LLMConfig
   scope?: RevisionScope
+  preferred_language?: LanguageCode
   onChunk: (chunk: string) => void
   signal?: AbortSignal
 }): Promise<void> {
@@ -130,6 +133,7 @@ export async function chatWithDocument(params: {
         model: params.llm.model,
         timeout: params.llm.timeout,
       },
+      preferred_language: params.preferred_language,
     }),
     signal: params.signal,
   })

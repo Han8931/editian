@@ -6,6 +6,7 @@ import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure,
 import { reviseDocument, applyRevisions, chatWithDocument } from '../api/client'
 import DiffViewer from './DiffViewer'
 import Settings from './Settings'
+import { useI18n } from '../i18n'
 
 interface Props {
   doc: UploadResponse
@@ -24,76 +25,12 @@ const DEFAULT_LLM: LLMConfig = {
   timeout: 120,
 }
 
-const DOCX_DOCUMENT_SUGGESTIONS = [
-  'Fix grammar and tone throughout the document',
-  'Make the writing more concise',
-  'Rewrite the introduction to sound more professional',
-  'Add a short executive summary at the top',
-  'Turn the main points into bullet points',
-  'Strengthen the opening paragraph',
-]
-
-const DOCX_SINGLE_PARAGRAPH_SUGGESTIONS = [
-  'Paraphrase this paragraph',
-  'Make this more concise',
-  'Fix grammar and tone',
-  'Turn this into bullet points',
-  'Make this more formal',
-  'Add a short example below',
-]
-
-const DOCX_MULTI_PARAGRAPH_SUGGESTIONS = [
-  'Summarize this and put it below',
-  'Merge these into one paragraph',
-  'Rewrite this section for clarity',
-  'Make this section more concise',
-  'Turn this into bullet points',
-  'Make this section more formal',
-]
-
-const TABLE_SUGGESTIONS = [
-  'Rewrite the selected cells more clearly',
-  'Standardize the wording in this table',
-  'Make the text more concise',
-  'Use a more professional tone',
-]
-
-const PPTX_SLIDE_SUGGESTIONS = [
-  'Make this slide more concise',
-  'Rewrite this slide for an executive audience',
-  'Turn this slide into 3 bullet points',
-  'Fix grammar on this slide',
-  'Shorten the title and body',
-  'Add a new slide about',
-]
-
-const PPTX_SHAPE_SUGGESTIONS = [
-  'Rewrite this text more clearly',
-  'Make this shorter',
-  'Fix grammar',
-  'Turn this into bullet points',
-  'Make this more formal',
-]
-
 function loadSavedLLM(): LLMConfig {
   try {
     const raw = localStorage.getItem('editian_llm')
     if (raw) return { ...DEFAULT_LLM, ...JSON.parse(raw) }
   } catch {}
   return DEFAULT_LLM
-}
-
-function getEditSuggestions(isPptx: boolean, selectedIndices: number[], selectedTable?: number | null): string[] {
-  if (selectedTable != null) return TABLE_SUGGESTIONS
-
-  if (isPptx) {
-    if (selectedIndices.length > 0) return PPTX_SHAPE_SUGGESTIONS
-    return PPTX_SLIDE_SUGGESTIONS
-  }
-
-  if (selectedIndices.length > 1) return DOCX_MULTI_PARAGRAPH_SUGGESTIONS
-  if (selectedIndices.length === 1) return DOCX_SINGLE_PARAGRAPH_SUGGESTIONS
-  return DOCX_DOCUMENT_SUGGESTIONS
 }
 
 export default function Sidebar({
@@ -105,6 +42,7 @@ export default function Sidebar({
   selectedTable,
   style,
 }: Props) {
+  const { language, setLanguage, msg } = useI18n()
   const [showSettings, setShowSettings] = useState(false)
   const [llm, setLlm] = useState<LLMConfig>(loadSavedLLM)
   const [activeTab, setActiveTab] = useState<'edit' | 'chat'>('edit')
@@ -125,6 +63,25 @@ export default function Sidebar({
   const copyResetTimerRef = useRef<number | null>(null)
 
   const isPptx = doc.file_type === 'pptx'
+  const selectionTargetLabel = isPptx
+    ? (language === 'en' ? 'shapes' : language === 'zh' ? '形状' : '도형')
+    : (language === 'en' ? 'paragraphs' : language === 'zh' ? '段落' : '단락')
+  const selectionScopeLabel = isPptx
+    ? (language === 'en' ? 'current slide' : language === 'zh' ? '当前幻灯片' : '현재 슬라이드')
+    : (language === 'en' ? 'whole document' : language === 'zh' ? '整份文档' : '문서 전체')
+
+  function getEditSuggestions(): string[] {
+    if (selectedTable != null) return msg<string[]>('tableSuggestions')
+
+    if (isPptx) {
+      if (selectedIndices.length > 0) return msg<string[]>('pptxShapeSuggestions')
+      return msg<string[]>('pptxSlideSuggestions')
+    }
+
+    if (selectedIndices.length > 1) return msg<string[]>('docxMultiParagraphSuggestions')
+    if (selectedIndices.length === 1) return msg<string[]>('docxSingleParagraphSuggestions')
+    return msg<string[]>('docxDocumentSuggestions')
+  }
 
   // Auto-scroll chat to bottom when messages change
   useEffect(() => {
@@ -161,12 +118,12 @@ export default function Sidebar({
       const result = await reviseDocument({ file_id: doc.file_id, scope: buildScope(), instruction, llm, current_slide: isPptx ? currentSlide : undefined })
       if (result.revisions.length === 0) {
         setRevisions([])
-        setEditError('The AI did not produce any changes for this selection. Try selecting a full paragraph or rephrasing the instruction.')
+        setEditError(msg('aiNoChanges'))
         return
       }
       setRevisions(result.revisions)
     } catch (e) {
-      setEditError(e instanceof Error ? e.message : 'Revision failed.')
+      setEditError(e instanceof Error ? e.message : msg('revisionFailed'))
     } finally {
       setEditLoading(false)
     }
@@ -181,7 +138,7 @@ export default function Sidebar({
         onSlideChange(revision.scope.slide_index + 1)
       }
     } catch (e) {
-      setEditError(e instanceof Error ? e.message : 'Failed to apply revision.')
+      setEditError(e instanceof Error ? e.message : msg('failedToApplyRevision'))
     }
   }
 
@@ -196,7 +153,7 @@ export default function Sidebar({
       }
       setRevisions([])
     } catch (e) {
-      setEditError(e instanceof Error ? e.message : 'Failed to apply revisions.')
+      setEditError(e instanceof Error ? e.message : msg('failedToApplyRevisions'))
     }
   }
 
@@ -225,6 +182,7 @@ export default function Sidebar({
         messages: nextMessages,
         llm,
         scope: hasSelection ? scope : undefined,
+        preferred_language: language,
         onChunk: (chunk) => {
           setChatMessages((prev) => {
             const updated = [...prev]
@@ -237,7 +195,7 @@ export default function Sidebar({
         },
       })
     } catch (e) {
-      setChatError(e instanceof Error ? e.message : 'Chat failed.')
+      setChatError(e instanceof Error ? e.message : msg('chatFailed'))
       setChatMessages(nextMessages) // remove empty placeholder on error
     } finally {
       setChatLoading(false)
@@ -261,6 +219,7 @@ export default function Sidebar({
         messages: messagesUpToUser,
         llm,
         scope: hasSelection ? scope : undefined,
+        preferred_language: language,
         onChunk: (chunk) => {
           setChatMessages((prev) => {
             const updated = [...prev]
@@ -273,7 +232,7 @@ export default function Sidebar({
         },
       })
     } catch (e) {
-      setChatError(e instanceof Error ? e.message : 'Chat failed.')
+      setChatError(e instanceof Error ? e.message : msg('chatFailed'))
       setChatMessages(messagesUpToUser)
     } finally {
       setChatLoading(false)
@@ -297,7 +256,7 @@ export default function Sidebar({
         copyResetTimerRef.current = null
       }, 1500)
     } catch (e) {
-      setChatError(e instanceof Error ? e.message : 'Failed to copy message.')
+      setChatError(e instanceof Error ? e.message : msg('failedToCopyMessage'))
     }
   }
 
@@ -307,36 +266,36 @@ export default function Sidebar({
     return (
       <aside className="border-l border-gray-200 bg-white flex flex-col flex-shrink-0" style={style}>
         <div className="h-12 px-4 border-b border-gray-200 flex items-center gap-3">
-          <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600 transition-colors" title="Back">
+          <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600 transition-colors" title={msg('back')}>
             <ArrowLeft size={16} />
           </button>
-          <span className="font-medium text-gray-800">LLM Settings</span>
+          <span className="font-medium text-gray-800">{msg('settings')}</span>
         </div>
-        <Settings llm={llm} onChange={setLlm} />
+        <Settings llm={llm} language={language} onChange={setLlm} onLanguageChange={setLanguage} />
       </aside>
     )
   }
 
   const selectionLabel = (() => {
-    if (selectedTable != null) return 'Table selected'
+    if (selectedTable != null) return msg('tableSelected')
     if (selectedIndices.length === 0) return null
-    if (isPptx) return `${selectedIndices.length} shape${selectedIndices.length > 1 ? 's' : ''} selected`
-    return `${selectedIndices.length} paragraph${selectedIndices.length > 1 ? 's' : ''} selected`
+    if (isPptx) return msg('shapesSelected', { count: selectedIndices.length })
+    return msg('paragraphsSelected', { count: selectedIndices.length })
   })()
 
   const pptxStructure = isPptx ? (doc.structure as PptxStructure) : null
-  const suggestions = getEditSuggestions(isPptx, selectedIndices, selectedTable)
+  const suggestions = getEditSuggestions()
 
   return (
     <aside className="border-l border-gray-200 bg-white flex flex-col flex-shrink-0" style={style}>
 
       {/* Header */}
-      <div className="h-12 px-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+        <div className="h-12 px-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-blue-500 flex items-center justify-center flex-shrink-0">
             <Sparkles size={13} className="text-white" />
           </div>
-          <span className="font-semibold text-sm text-gray-800">AI</span>
+          <span className="font-semibold text-sm text-gray-800">{msg('aiPanel')}</span>
 
           {/* Edit | Chat tab toggle */}
           <div className="flex items-center bg-gray-100 rounded-lg p-0.5 ml-2">
@@ -349,13 +308,13 @@ export default function Sidebar({
                 }`}
               >
                 {tab === 'edit' ? <PenLine size={11} /> : <MessageSquare size={11} />}
-                {tab === 'edit' ? 'Edit' : 'Chat'}
+                {tab === 'edit' ? msg('editTab') : msg('chatTab')}
               </button>
             ))}
           </div>
         </div>
 
-        <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-gray-600 transition-colors" title="LLM settings">
+        <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-gray-600 transition-colors" title={msg('settings')}>
           <Settings2 size={16} />
         </button>
       </div>
@@ -366,7 +325,7 @@ export default function Sidebar({
 
           {isPptx && pptxStructure && (
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Slide</label>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">{msg('slide')}</label>
               <select
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 transition-colors"
                 value={currentSlide}
@@ -374,7 +333,7 @@ export default function Sidebar({
               >
                 {pptxStructure.slides.map((s, i) => (
                   <option key={s.index} value={i}>
-                    Slide {i + 1}{s.shapes[0] ? ` — ${s.shapes[0].text.slice(0, 30)}` : ''}
+                    {msg('slideLabel', { index: i + 1, title: s.shapes[0] ? s.shapes[0].text.slice(0, 30) : '' })}
                   </option>
                 ))}
               </select>
@@ -390,7 +349,7 @@ export default function Sidebar({
             <div className="flex items-start gap-2.5 rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5">
               <MousePointer size={13} className="text-gray-400 flex-shrink-0 mt-0.5" />
               <p className="text-xs text-gray-500 leading-relaxed">
-                Click or drag to select {isPptx ? 'shapes' : 'paragraphs'}. Without a selection, the {isPptx ? 'current slide' : 'whole document'} is revised.
+                {msg('clickOrDragSelect', { target: selectionTargetLabel, scope: selectionScopeLabel })}
               </p>
             </div>
           )}
@@ -399,7 +358,7 @@ export default function Sidebar({
             <textarea
               className="w-full border border-gray-200 rounded-xl bg-gray-50 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 focus:bg-white transition-all placeholder-gray-400"
               rows={4}
-              placeholder="What would you like to change?"
+              placeholder={msg('whatToChange')}
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleRevise() }}
@@ -410,30 +369,26 @@ export default function Sidebar({
                   {suggestions.map((s) => (
                     <button
                       key={s}
-                      onClick={() => setInstruction(s === 'Add a new slide about' ? 'Add a new slide about ' : s)}
+                      onClick={() => setInstruction(s === msg('addNewSlideAbout') ? `${msg('addNewSlideAbout')} ` : s)}
                       className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                        s === 'Add a new slide about'
+                        s === msg('addNewSlideAbout')
                           ? 'border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300'
                           : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300'
                       }`}
                     >
-                      {s === 'Add a new slide about' ? '+ ' + s + '…' : s}
+                      {s === msg('addNewSlideAbout') ? `+ ${s}…` : s}
                     </button>
                   ))}
                 </div>
                 {isPptx && (
-                  <p className="text-xs text-gray-400">
-                    Tip: you can revise slide text, add a new slide, or edit the selected shape/table content.
-                  </p>
+                  <p className="text-xs text-gray-400">{msg('pptxTip')}</p>
                 )}
                 {!isPptx && selectedIndices.length > 1 && selectedTable == null && (
-                  <p className="text-xs text-gray-400">
-                    Tip: multi-selection can rewrite each paragraph, merge them into one, or add a new summary below.
-                  </p>
+                  <p className="text-xs text-gray-400">{msg('multiParagraphTip')}</p>
                 )}
               </div>
             )}
-            <p className="text-xs text-gray-400">⌘ Enter to submit</p>
+            <p className="text-xs text-gray-400">{msg('submitShortcut')}</p>
           </div>
 
           {editError && (
@@ -452,7 +407,7 @@ export default function Sidebar({
             {editLoading ? (
               <>
                 <Sparkles size={14} className="opacity-80" />
-                <span className="tracking-wide">Revising</span>
+                <span className="tracking-wide">{msg('revising')}</span>
                 <span className="flex items-center gap-[3px] ml-0.5 mt-px">
                   <span className="dot-bounce" />
                   <span className="dot-bounce" />
@@ -462,7 +417,7 @@ export default function Sidebar({
             ) : (
               <>
                 <Sparkles size={14} />
-                Revise
+                {msg('revise')}
               </>
             )}
           </button>
@@ -471,11 +426,11 @@ export default function Sidebar({
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  {revisions.length} revision{revisions.length > 1 ? 's' : ''}
+                  {msg('revisionsCount', { count: revisions.length })}
                 </span>
                 {revisions.length > 1 && (
                   <button onClick={handleAcceptAll} className="text-xs font-medium text-green-600 hover:text-green-700 transition-colors">
-                    Accept all
+                    {msg('acceptAll')}
                   </button>
                 )}
               </div>
@@ -499,18 +454,16 @@ export default function Sidebar({
                 <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
                   <MessageSquare size={18} className="text-gray-400" />
                 </div>
-                <p className="text-sm font-medium text-gray-600">Ask anything about this document</p>
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  Summarize sections, clarify wording, ask about tone — the AI has the full document as context.
-                </p>
+                <p className="text-sm font-medium text-gray-600">{msg('askAnything')}</p>
+                <p className="text-xs text-gray-400 leading-relaxed">{msg('chatEmptyState')}</p>
               </div>
             )}
 
-            {chatMessages.map((msg, i) => (
-              <div key={i} className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                {msg.role === 'user' ? (
+            {chatMessages.map((message, i) => (
+              <div key={i} className={`flex flex-col gap-1 ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                {message.role === 'user' ? (
                   <div className="max-w-[90%] rounded-2xl rounded-br-sm px-3.5 py-2.5 text-sm leading-relaxed bg-blue-500 text-white whitespace-pre-wrap">
-                    {msg.content}
+                    {message.content}
                   </div>
                 ) : (
                   <div className="max-w-[95%] rounded-2xl rounded-bl-sm px-3.5 py-2.5 bg-gray-100 text-gray-800 text-sm prose-chat">
@@ -536,39 +489,39 @@ export default function Sidebar({
                         td:         ({ children }) => <td className="border border-gray-300 px-2 py-1">{children}</td>,
                       }}
                     >
-                      {msg.content}
+                      {message.content}
                     </ReactMarkdown>
-                    {chatLoading && i === chatMessages.length - 1 && msg.content !== '' && (
+                    {chatLoading && i === chatMessages.length - 1 && message.content !== '' && (
                       <span className="inline-block w-0.5 h-3.5 bg-gray-400 align-middle ml-0.5 animate-pulse" />
                     )}
                   </div>
                 )}
-                {msg.role === 'assistant' && (
+                {message.role === 'assistant' && (
                   <div className="flex items-center gap-3 px-1">
                     <button
-                      onClick={() => copyChatMessage(msg.content, i)}
+                      onClick={() => copyChatMessage(message.content, i)}
                       className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                      title="Copy response"
+                      title={msg('copyResponse')}
                     >
                       {copiedChatIndex === i ? <Check size={11} /> : <Copy size={11} />}
-                      {copiedChatIndex === i ? 'Copied' : 'Copy'}
+                      {copiedChatIndex === i ? msg('copied') : msg('copy')}
                     </button>
                     <button
-                      onClick={() => useAsInstruction(msg.content)}
+                      onClick={() => useAsInstruction(message.content)}
                       className="flex items-center gap-1 text-xs text-gray-400 hover:text-blue-500 transition-colors"
-                      title="Use as edit instruction"
+                      title={msg('useAsInstruction')}
                     >
                       <PenLine size={11} />
-                      Use as instruction
+                      {msg('useAsInstruction')}
                     </button>
                     {i === chatMessages.length - 1 && !chatLoading && (
                       <button
                         onClick={handleRetry}
                         className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                        title="Retry"
+                        title={msg('retry')}
                       >
                         <RotateCcw size={11} />
-                        Retry
+                        {msg('retry')}
                       </button>
                     )}
                   </div>
@@ -597,7 +550,7 @@ export default function Sidebar({
           {selectionLabel && (
             <div className="flex-shrink-0 flex items-center gap-2 border-t border-gray-200 px-3 py-2 bg-blue-50">
               <div className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-              <span className="text-xs font-medium text-blue-700 truncate">{selectionLabel} — asking about selection</span>
+              <span className="text-xs font-medium text-blue-700 truncate">{msg('askingAboutSelection', { selection: selectionLabel })}</span>
             </div>
           )}
 
@@ -607,7 +560,7 @@ export default function Sidebar({
               <button
                 onClick={() => { setChatMessages([]); setChatError(null) }}
                 className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors flex-shrink-0"
-                title="Clear conversation"
+                title={msg('clearConversation')}
               >
                 <Trash2 size={14} />
               </button>
@@ -615,7 +568,7 @@ export default function Sidebar({
             <textarea
               className="flex-1 border border-gray-200 rounded-xl bg-gray-50 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 focus:bg-white transition-all placeholder-gray-400 max-h-32"
               rows={1}
-              placeholder="Ask about this document…"
+              placeholder={msg('askAboutDocument')}
               value={chatInput}
               onChange={(e) => {
                 setChatInput(e.target.value)
@@ -634,7 +587,7 @@ export default function Sidebar({
               onClick={handleChat}
               disabled={chatLoading || !chatInput.trim()}
               className="w-8 h-8 flex items-center justify-center rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-              title="Send (Enter)"
+              title={`${msg('send')} (Enter)`}
             >
               {chatLoading ? <Loader2 size={14} className="animate-spin" /> : <CornerDownLeft size={14} />}
             </button>

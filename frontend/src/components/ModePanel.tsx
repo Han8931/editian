@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { PenLine } from 'lucide-react'
 import type { UploadResponse } from '../types'
+import { useI18n } from '../i18n'
 
 interface Props {
   doc: UploadResponse
@@ -8,8 +9,11 @@ interface Props {
 }
 
 export default function ModePanel({ doc, style }: Props) {
+  const { msg } = useI18n()
   const isPptx = doc.file_type === 'pptx'
   const isMarkdown = doc.file_type === 'markdown'
+  const undoLabel = msg('undo')
+  const cancelEditLabel = msg('cancelEdit')
 
   return (
     <aside className="flex-shrink-0 bg-white border-l border-gray-200 h-full flex flex-col" style={style}>
@@ -20,7 +24,7 @@ export default function ModePanel({ doc, style }: Props) {
           <div className="w-6 h-6 rounded-md bg-gray-700 flex items-center justify-center flex-shrink-0">
             <PenLine size={13} className="text-white" />
           </div>
-          <span className="font-semibold text-sm text-gray-800">Manual Edit</span>
+          <span className="font-semibold text-sm text-gray-800">{msg('manualEditTitle')}</span>
         </div>
       </div>
 
@@ -28,29 +32,25 @@ export default function ModePanel({ doc, style }: Props) {
 
         {/* How to edit */}
         <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-          <div className="text-xs font-semibold uppercase tracking-wider text-blue-600 mb-2">How to edit</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-blue-600 mb-2">{msg('howToEdit')}</div>
           <div className="space-y-1.5 text-sm text-blue-900">
-            <p>Click on any {isPptx ? 'text box' : isMarkdown ? 'markdown block' : 'paragraph'} to start editing.</p>
-            <p>{isMarkdown ? 'Edit the markdown source, then save the block.' : 'Type to edit — changes save automatically.'}</p>
-            <p>
-              Press{' '}
-              <kbd className="px-1 py-0.5 bg-blue-100 rounded text-xs font-mono">Esc</kbd>
-              {' '}to discard changes to the current {isMarkdown ? 'block' : 'element'}.
-            </p>
+            <p>{isPptx ? msg('clickToEditTextBox') : isMarkdown ? msg('clickToEditMarkdownBlock') : msg('clickToEditParagraph')}</p>
+            <p>{isMarkdown ? msg('editMarkdownSource') : msg('typeToEditAutoSave')}</p>
+            <p>{isMarkdown ? msg('discardCurrentBlock') : msg('discardCurrentElement')}</p>
           </div>
         </div>
 
         {/* Keyboard shortcuts */}
         <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-          <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Shortcuts</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">{msg('shortcuts')}</div>
           <div className="space-y-2 text-sm">
             {[
-              ['Bold',        '⌘ B'],
-              ['Italic',      '⌘ I'],
-              ['Underline',   '⌘ U'],
-              ['Undo',        '⌘ Z'],
-              ['Cancel edit', 'Esc'],
-            ].filter(([label]) => !isMarkdown || ['Undo', 'Cancel edit'].includes(label)).map(([label, key]) => (
+              [msg('bold'),        '⌘ B'],
+              [msg('italic'),      '⌘ I'],
+              [msg('underline'),   '⌘ U'],
+              [undoLabel,          '⌘ Z'],
+              [cancelEditLabel,    'Esc'],
+            ].filter(([label]) => !isMarkdown || [undoLabel, cancelEditLabel].includes(label)).map(([label, key]) => (
               <div key={label} className="flex justify-between items-center">
                 <span className="text-gray-600">{label}</span>
                 <kbd className="px-1.5 py-0.5 bg-white border border-gray-200 rounded text-xs font-mono text-gray-700">{key}</kbd>
@@ -61,11 +61,11 @@ export default function ModePanel({ doc, style }: Props) {
 
         {/* Notes */}
         <div className="rounded-xl border border-gray-200 px-4 py-3">
-          <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Notes</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">{msg('notes')}</div>
           <div className="space-y-2 text-sm text-gray-500">
-            {!isMarkdown && <p>Block-level formatting (bold, italic, underline, font size) is preserved when the edited block uses one consistent style.</p>}
-            {isMarkdown && <p>Markdown mode edits the underlying source text. Rich text controls do not apply to `.md` files.</p>}
-            <p>Use <span className="font-medium text-gray-700">AI mode</span> for instruction-based revisions and batch edits.</p>
+            {!isMarkdown && <p>{msg('manualNotesRichText')}</p>}
+            {isMarkdown && <p>{msg('manualNotesMarkdown')}</p>}
+            <p>{msg('manualNotesAi')}</p>
           </div>
         </div>
 

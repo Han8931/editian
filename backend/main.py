@@ -206,6 +206,7 @@ class ReviseRequest(BaseModel):
     instruction: str
     llm: LLMConfig
     current_slide: Optional[int] = None  # hint: which slide the user is currently viewing
+    preferred_language: Optional[str] = None
 
 
 class ApplyRevision(BaseModel):
@@ -1288,6 +1289,7 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     llm: LLMConfig
     scope: Optional[RevisionScope] = None
+    preferred_language: Optional[str] = None
 
 
 _CHAT_SYSTEM_PROMPT = (
@@ -1295,6 +1297,16 @@ _CHAT_SYSTEM_PROMPT = (
     "Answer clearly and concisely. You may quote relevant passages when helpful. "
     "Do not make up content that is not in the document."
 )
+
+
+def _chat_language_instruction(code: Optional[str]) -> str:
+    if code == "zh":
+        return "Respond in Simplified Chinese unless the user explicitly asks for another language."
+    if code == "ko":
+        return "Respond in Korean unless the user explicitly asks for another language."
+    if code == "en":
+        return "Respond in English unless the user explicitly asks for another language."
+    return ""
 
 
 def _extract_selected_text(
@@ -1372,6 +1384,9 @@ async def chat(req: ChatRequest):
 
     # Build system prompt — append selected passage when a scope is provided
     system_prompt = f"{_CHAT_SYSTEM_PROMPT}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
+    language_instruction = _chat_language_instruction(req.preferred_language)
+    if language_instruction:
+        system_prompt = f"{system_prompt}\n\n{language_instruction}"
     if req.scope:
         selected_text = _extract_selected_text(file_type, file_path, req.scope, req.file_id)
         if selected_text:

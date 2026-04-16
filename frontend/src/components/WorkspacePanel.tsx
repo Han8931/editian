@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
 import { Plus, Trash2, FileText, Pencil, GitBranch, FolderOpen, Folder, FolderPlus, ChevronRight, ChevronDown } from 'lucide-react'
 import type { Workspace, Directory } from '../types'
+import { useI18n } from '../i18n'
 
 interface Props {
   workspaces: Workspace[]
@@ -59,6 +60,7 @@ export default function WorkspacePanel({
   workspaces, directories, activeId, onSelect, onCreate, onDelete, onRename, onBranch,
   onCreateDirectory, onDeleteDirectory, onRenameDirectory, onMoveWorkspace, style,
 }: Props) {
+  const { msg } = useI18n()
   // Workspace rename
   const [editingWsId, setEditingWsId] = useState<string | null>(null)
   const [wsDraft, setWsDraft] = useState('')
@@ -182,15 +184,15 @@ export default function WorkspacePanel({
         {!isEditing && (
           <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             {ws.doc && (
-              <button onClick={(e) => { e.stopPropagation(); onBranch(ws.id) }} className="p-0.5 text-gray-600 hover:text-blue-400 transition-colors" title="Branch">
+              <button onClick={(e) => { e.stopPropagation(); onBranch(ws.id) }} className="p-0.5 text-gray-600 hover:text-blue-400 transition-colors" title={msg('branch')}>
                 <GitBranch size={11} />
               </button>
             )}
-            <button onClick={(e) => { e.stopPropagation(); startRenameWs(ws) }} className="p-0.5 text-gray-600 hover:text-gray-200 transition-colors" title="Rename">
+            <button onClick={(e) => { e.stopPropagation(); startRenameWs(ws) }} className="p-0.5 text-gray-600 hover:text-gray-200 transition-colors" title={msg('rename')}>
               <Pencil size={11} />
             </button>
             {workspaces.length > 1 && (
-              <button onClick={(e) => { e.stopPropagation(); onDelete(ws.id) }} className="p-0.5 text-gray-600 hover:text-red-400 transition-colors" title="Delete">
+              <button onClick={(e) => { e.stopPropagation(); onDelete(ws.id) }} className="p-0.5 text-gray-600 hover:text-red-400 transition-colors" title={msg('delete')}>
                 <Trash2 size={11} />
               </button>
             )}
@@ -233,20 +235,20 @@ export default function WorkspacePanel({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <FolderOpen size={13} className="text-gray-500" />
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Workspaces</span>
+            <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{msg('workspaces')}</span>
           </div>
           <div className="flex items-center gap-0.5">
             <span className="text-xs text-gray-600 mr-1">{workspaces.length}</span>
-            <button onClick={onCreateDirectory} className="w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors" title="New folder">
+            <button onClick={onCreateDirectory} className="w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors" title={msg('newFolder')}>
               <FolderPlus size={13} />
             </button>
-            <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors" title="New workspace">
+            <button onClick={onCreate} className="w-6 h-6 flex items-center justify-center rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors" title={msg('newWorkspace')}>
               <Plus size={14} />
             </button>
           </div>
         </div>
         <div className="text-[10px] text-gray-600 leading-none">
-          {docCount === 0 ? 'No documents loaded' : `${docCount} document${docCount > 1 ? 's' : ''} loaded`}
+          {docCount === 0 ? msg('noDocumentsLoaded') : msg('documentsLoaded', { count: docCount })}
         </div>
       </div>
 
@@ -325,10 +327,10 @@ export default function WorkspacePanel({
                 {!isEditing && (
                   <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <span className="text-[10px] text-gray-600 mr-0.5">{roots.length}</span>
-                    <button onClick={(e) => { e.stopPropagation(); startRenameDir(dir) }} className="p-0.5 text-gray-600 hover:text-gray-200 transition-colors" title="Rename folder">
+                    <button onClick={(e) => { e.stopPropagation(); startRenameDir(dir) }} className="p-0.5 text-gray-600 hover:text-gray-200 transition-colors" title={msg('renameFolder')}>
                       <Pencil size={11} />
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); onDeleteDirectory(dir.id) }} className="p-0.5 text-gray-600 hover:text-red-400 transition-colors" title="Delete folder">
+                    <button onClick={(e) => { e.stopPropagation(); onDeleteDirectory(dir.id) }} className="p-0.5 text-gray-600 hover:text-red-400 transition-colors" title={msg('deleteFolder')}>
                       <Trash2 size={11} />
                     </button>
                   </div>
@@ -340,7 +342,7 @@ export default function WorkspacePanel({
                 <div>
                   {roots.length === 0 ? (
                     <div className={`px-6 py-1.5 text-[10px] italic transition-colors ${isOver ? 'text-blue-400/60' : 'text-gray-700'}`}>
-                      {isOver ? 'Drop here' : 'Empty folder'}
+                      {isOver ? msg('dropHere') : msg('emptyFolder')}
                     </div>
                   ) : (
                     renderWorkspaces(roots, 1)
@@ -357,7 +359,7 @@ export default function WorkspacePanel({
             dragOver === 'root' ? 'text-blue-400' : 'text-gray-700'
           }`}>
             <div className={`flex-1 h-px ${dragOver === 'root' ? 'bg-blue-500/40' : 'bg-gray-800'}`} />
-            <span className="text-[9px] uppercase tracking-widest select-none">No folder</span>
+            <span className="text-[9px] uppercase tracking-widest select-none">{msg('noFolder')}</span>
             <div className={`flex-1 h-px ${dragOver === 'root' ? 'bg-blue-500/40' : 'bg-gray-800'}`} />
           </div>
         )}

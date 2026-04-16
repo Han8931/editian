@@ -2,12 +2,14 @@ import { useCallback, useState } from 'react'
 import { uploadFile } from '../api/client'
 import type { UploadResponse } from '../types'
 import editianLogo from '../../../assets/editian_icon.svg'
+import { useI18n } from '../i18n'
 
 interface Props {
   onUpload: (response: UploadResponse) => void
 }
 
 export default function FileUpload({ onUpload }: Props) {
+  const { msg } = useI18n()
   const [isDragging, setIsDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -15,7 +17,7 @@ export default function FileUpload({ onUpload }: Props) {
   const handleFile = useCallback(async (file: File) => {
     const ext = file.name.split('.').pop()?.toLowerCase()
     if (ext !== 'docx' && ext !== 'pptx' && ext !== 'md' && ext !== 'markdown') {
-      setError('Only .docx, .pptx, and markdown files are supported.')
+      setError(msg('uploadUnsupported'))
       return
     }
     setLoading(true)
@@ -24,7 +26,7 @@ export default function FileUpload({ onUpload }: Props) {
       const response = await uploadFile(file)
       onUpload(response)
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Upload failed.')
+      setError(error instanceof Error ? error.message : msg('uploadFailed'))
     } finally {
       setLoading(false)
     }
@@ -58,7 +60,7 @@ export default function FileUpload({ onUpload }: Props) {
           onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
         />
         {loading ? (
-          <div className="text-gray-500 text-sm">Processing document…</div>
+          <div className="text-gray-500 text-sm">{msg('processingDocument')}</div>
         ) : (
           <>
             <div className="flex flex-col items-center gap-2 mb-1">
@@ -71,10 +73,10 @@ export default function FileUpload({ onUpload }: Props) {
               <div className="text-xl font-semibold text-gray-700">Editian</div>
             </div>
             <div className="text-center">
-              <div className="font-medium text-gray-700">Drop your file here</div>
-              <div className="text-sm text-gray-400 mt-1">or click to browse</div>
+              <div className="font-medium text-gray-700">{msg('dropFileHere')}</div>
+              <div className="text-sm text-gray-400 mt-1">{msg('clickToBrowse')}</div>
             </div>
-            <div className="text-xs text-gray-400">.docx · .pptx · .md</div>
+            <div className="text-xs text-gray-400">{msg('supportedFileTypes')}</div>
           </>
         )}
       </div>

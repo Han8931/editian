@@ -7,6 +7,7 @@ import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
 import type { UploadResponse, Revision, Workspace, Directory } from './types'
 import editianLogo from '../../assets/editian_icon.svg'
+import { useI18n } from './i18n'
 
 const SIDEBAR_MIN = 240
 const SIDEBAR_MAX = 600
@@ -32,8 +33,8 @@ function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function newWorkspace(): Workspace {
-  return { id: makeId(), name: 'New workspace', doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null }
+function newWorkspace(name = 'New workspace'): Workspace {
+  return { id: makeId(), name, doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null }
 }
 
 function loadStoredWorkspaces(): StoredWorkspace[] {
@@ -55,10 +56,12 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
+  const { msg } = useI18n()
+  const defaultWorkspaceName = msg('newWorkspace')
   // ── Workspace state ────────────────────────────────────────────────────
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => {
     const stored = loadStoredWorkspaces()
-    if (stored.length === 0) return [newWorkspace()]
+    if (stored.length === 0) return [newWorkspace(defaultWorkspaceName)]
     return stored.map((s) => ({ id: s.id, name: s.name, doc: null, currentSlide: 0, selectedIndices: [], selectedTable: null, parentId: s.parentId, directoryId: s.directoryId }))
   })
 
@@ -141,7 +144,7 @@ export default function App() {
   // ── Workspace management ───────────────────────────────────────────────
 
   function handleCreateWorkspace() {
-    const w = newWorkspace()
+    const w = newWorkspace(defaultWorkspaceName)
     setWorkspaces((prev) => [...prev, w])
     setActiveId(w.id)
     setShowDownload(false)
@@ -160,7 +163,7 @@ export default function App() {
     setWorkspaces((prev) => {
       const next = prev.filter((w) => w.id !== id)
       if (next.length === 0) {
-        const fresh = newWorkspace()
+        const fresh = newWorkspace(defaultWorkspaceName)
         setActiveId(fresh.id)
         return [fresh]
       }
@@ -191,14 +194,14 @@ export default function App() {
       setWorkspaces((prev) => [...prev, branch])
       setActiveId(branch.id)
     } catch (e) {
-      setEditError(e instanceof Error ? e.message : 'Branch failed.')
+      setEditError(e instanceof Error ? e.message : msg('branchFailed'))
     }
   }
 
   // ── Directory management ───────────────────────────────────────────────
 
   function handleCreateDirectory() {
-    setDirectories((prev) => [...prev, { id: makeId(), name: 'New folder' }])
+    setDirectories((prev) => [...prev, { id: makeId(), name: msg('newFolder') }])
   }
 
   function handleDeleteDirectory(id: string) {
@@ -251,7 +254,7 @@ export default function App() {
     try {
       await next
     } catch (e) {
-      setEditError(e instanceof Error ? e.message : 'Edit failed.')
+      setEditError(e instanceof Error ? e.message : msg('editFailed'))
     } finally {
       if (directEditQueuesRef.current.get(queueKey) === next) {
         directEditQueuesRef.current.delete(queueKey)
@@ -262,18 +265,18 @@ export default function App() {
   async function handleUndo() {
     if (!doc) return
     try { patchActive({ doc: await undoRevision(doc.file_id) }) }
-    catch (e) { setEditError(e instanceof Error ? e.message : 'Undo failed.') }
+    catch (e) { setEditError(e instanceof Error ? e.message : msg('undoFailed')) }
   }
 
   async function handleRedo() {
     if (!doc) return
     try { patchActive({ doc: await redoRevision(doc.file_id) }) }
-    catch (e) { setEditError(e instanceof Error ? e.message : 'Redo failed.') }
+    catch (e) { setEditError(e instanceof Error ? e.message : msg('redoFailed')) }
   }
 
   async function handleCloseDoc() {
     if (doc) await deleteFile(doc.file_id).catch(() => {})
-    patchActive({ doc: null, name: 'New workspace', currentSlide: 0, selectedIndices: [], selectedTable: null })
+    patchActive({ doc: null, name: msg('newWorkspace'), currentSlide: 0, selectedIndices: [], selectedTable: null })
     setShowDownload(false)
   }
 
@@ -297,7 +300,7 @@ export default function App() {
 
     if ('showSaveFilePicker' in window) {
       try {
-        const handle = await (window as any).showSaveFilePicker({ suggestedName: name, types: [{ description: `${ext.toUpperCase()} file`, accept: { [mime]: [`.${ext}`] } }] })
+        const handle = await (window as any).showSaveFilePicker({ suggestedName: name, types: [{ description: msg('fileDescription', { ext }), accept: { [mime]: [`.${ext}`] } }] })
         const blob = await fetch(url).then((r) => r.blob())
         const w = await handle.createWritable()
         await w.write(blob); await w.close()
@@ -389,7 +392,7 @@ export default function App() {
       <header className="h-12 bg-white border-b border-gray-200 flex items-center px-5 gap-3 flex-shrink-0 shadow-sm z-10">
         <div className="flex items-center gap-2 min-w-0">
           <img src={editianLogo} alt="Editian logo" className="h-6 w-6 flex-shrink-0" />
-          <span className="font-semibold text-gray-800 text-sm">Editian</span>
+          <span className="font-semibold text-gray-800 text-sm">{msg('appName')}</span>
         </div>
         {doc && (
           <>
@@ -412,7 +415,7 @@ export default function App() {
                   onAuxClick={swallowPointerEvent}
                   onContextMenu={swallowPointerEvent}
                   disabled={!doc.can_undo}
-                  title="Undo (⌘Z)"
+                  title={`${msg('undo')} (⌘Z)`}
                   className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↩</button>
                 <button
                   type="button"
@@ -425,7 +428,7 @@ export default function App() {
                   onAuxClick={swallowPointerEvent}
                   onContextMenu={swallowPointerEvent}
                   disabled={!doc.can_redo}
-                  title="Redo (⌘⇧Z)"
+                  title={`${msg('redo')} (⌘⇧Z)`}
                   className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↪</button>
               </div>
               <div className="w-px h-4 bg-gray-200" />
@@ -443,7 +446,7 @@ export default function App() {
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {m === 'ai' ? 'AI' : 'Manual'}
+                  {m === 'ai' ? msg('ai') : msg('manual')}
                 </button>
               ))}
             </div>
@@ -451,18 +454,18 @@ export default function App() {
           <div className="w-px h-4 bg-gray-200" />
           {doc && (
             <div className="relative">
-              <button onClick={openDownload} className="text-sm text-blue-500 hover:text-blue-700 font-medium transition-colors">Download</button>
+              <button onClick={openDownload} className="text-sm text-blue-500 hover:text-blue-700 font-medium transition-colors">{msg('download')}</button>
               {showDownload && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowDownload(false)} />
                   <div className="absolute right-0 top-8 z-20 bg-white border border-gray-200 rounded-xl shadow-lg p-4 w-72">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">File name</p>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">{msg('fileName')}</p>
                     <input ref={downloadInputRef} type="text" value={downloadName} onChange={(e) => setDownloadName(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') triggerDownload() }}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 mb-3" spellCheck={false} />
                     <div className="flex gap-2">
-                      <button onClick={triggerDownload} className="flex-1 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors">Download</button>
-                      <button onClick={() => setShowDownload(false)} className="flex-1 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">Cancel</button>
+                      <button onClick={triggerDownload} className="flex-1 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors">{msg('download')}</button>
+                      <button onClick={() => setShowDownload(false)} className="flex-1 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">{msg('cancel')}</button>
                     </div>
                     <a ref={downloadAnchorRef} href={getDownloadUrl(doc.file_id)} download={downloadName || `revised_${doc.name}`} className="hidden" />
                   </div>
@@ -470,7 +473,7 @@ export default function App() {
               )}
             </div>
           )}
-          {doc && <button onClick={handleCloseDoc} className="text-sm text-gray-400 hover:text-gray-600 transition-colors">Close</button>}
+          {doc && <button onClick={handleCloseDoc} className="text-sm text-gray-400 hover:text-gray-600 transition-colors">{msg('close')}</button>}
         </div>
       </header>
 

@@ -6,6 +6,8 @@ export interface LLMConfig {
   timeout: number  // seconds
 }
 
+export type LanguageCode = 'en' | 'zh' | 'ko'
+
 export type ParagraphAlign = 'left' | 'center' | 'right' | 'justify'
 
 export interface Paragraph {

@@ -21,6 +21,7 @@ import {
   Undo2,
 } from 'lucide-react'
 import type { UploadResponse, PptxStructure, TextDocumentStructure, Revision, ParagraphAlign, Shape } from '../types'
+import { useI18n } from '../i18n'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -382,6 +383,7 @@ export default function DocumentPreview({
   canUndo = false,
   canRedo = false,
 }: Props) {
+  const { msg } = useI18n()
   const isManual = mode === 'manual'
   const isMarkdown = doc.file_type === 'markdown'
   const isTextDocument = doc.file_type === 'docx' || doc.file_type === 'markdown'
@@ -693,14 +695,14 @@ export default function DocumentPreview({
           onClick={zoomOut}
           disabled={zoom <= 50}
           className="w-7 h-7 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
-          title="Zoom out"
+          title={msg('zoomOut')}
         >
           −
         </button>
         <button
           onClick={() => setZoom(100)}
           className="text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded px-1 py-0.5 min-w-[3rem] text-center transition-colors"
-          title="Reset zoom"
+          title={msg('resetZoom')}
         >
           {zoom}%
         </button>
@@ -708,7 +710,7 @@ export default function DocumentPreview({
           onClick={zoomIn}
           disabled={zoom >= 200}
           className="w-7 h-7 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-medium"
-          title="Zoom in"
+          title={msg('zoomIn')}
         >
           +
         </button>
@@ -795,7 +797,7 @@ export default function DocumentPreview({
               onAuxClick={swallowPointerEvent}
               onContextMenu={swallowPointerEvent}
               disabled={!canUndo}
-              title="Undo"
+              title={msg('undo')}
               className={toolButtonClass}
             >
               <Undo2 size={15} />
@@ -811,7 +813,7 @@ export default function DocumentPreview({
               onAuxClick={swallowPointerEvent}
               onContextMenu={swallowPointerEvent}
               disabled={!canRedo}
-              title="Redo"
+              title={msg('redo')}
               className={toolButtonClass}
             >
               <Redo2 size={15} />
@@ -820,12 +822,12 @@ export default function DocumentPreview({
 
           <div className="ml-auto flex items-center gap-2">
             {editing ? (
-              <span className="text-xs text-gray-400 select-none">Editing markdown source</span>
+              <span className="text-xs text-gray-400 select-none">{msg('markdownSourceEditing')}</span>
             ) : null}
             <button
               onMouseDown={(e) => { e.preventDefault(); saveEdit() }}
               disabled={!canSave}
-              title="Save block"
+              title={msg('saveBlock')}
               className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors select-none ${
                 canSave
                   ? 'bg-blue-500 text-white hover:bg-blue-600'
@@ -833,7 +835,7 @@ export default function DocumentPreview({
               }`}
             >
               <Save size={14} />
-              Save
+              {msg('saveBlock')}
             </button>
           </div>
         </div>
@@ -934,7 +936,7 @@ export default function DocumentPreview({
                     setShowFontSizeMenu(true)
                   }
                 }}
-                title="Font size"
+                title={msg('fontSize')}
                 className={`${toolButtonClass} min-w-[4.75rem] justify-between bg-white`}
               >
                 <span className="text-xs font-medium">Size</span>
@@ -943,28 +945,28 @@ export default function DocumentPreview({
             </div>
             <button
               onMouseDown={(e) => { e.preventDefault(); fmt('bold') }}
-              title="Bold (⌘B)"
+              title={`${msg('bold')} (⌘B)`}
               className={toolButtonClass}
             >
               <Bold size={15} />
             </button>
             <button
               onMouseDown={(e) => { e.preventDefault(); fmt('italic') }}
-              title="Italic (⌘I)"
+              title={`${msg('italic')} (⌘I)`}
               className={toolButtonClass}
             >
               <Italic size={15} />
             </button>
             <button
               onMouseDown={(e) => { e.preventDefault(); fmt('underline') }}
-              title="Underline (⌘U)"
+              title={`${msg('underline')} (⌘U)`}
               className={toolButtonClass}
             >
               <Underline size={15} />
             </button>
             <button
               onMouseDown={(e) => { e.preventDefault(); fmt('strikeThrough') }}
-              title="Strikethrough"
+              title={msg('strikethrough')}
               className={toolButtonClass}
             >
               <Strikethrough size={15} />
@@ -974,21 +976,21 @@ export default function DocumentPreview({
           <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
             <button
               onMouseDown={(e) => { e.preventDefault(); applyAlignment('left') }}
-              title="Align left"
+              title={msg('alignLeft')}
               className={toolButtonClass}
             >
               <AlignLeft size={15} />
             </button>
             <button
               onMouseDown={(e) => { e.preventDefault(); applyAlignment('center') }}
-              title="Align center"
+              title={msg('alignCenter')}
               className={toolButtonClass}
             >
               <AlignCenter size={15} />
             </button>
             <button
               onMouseDown={(e) => { e.preventDefault(); applyAlignment('right') }}
-              title="Align right"
+              title={msg('alignRight')}
               className={toolButtonClass}
             >
               <AlignRight size={15} />
@@ -1003,7 +1005,7 @@ export default function DocumentPreview({
                   document.execCommand('insertUnorderedList', false, undefined)
                 })
               }}
-              title="Bullet list"
+              title={msg('bulletList')}
               className={toolButtonClass}
             >
               <List size={15} />
@@ -1026,7 +1028,7 @@ export default function DocumentPreview({
                     setHoverCell(null)
                   }
                 }}
-                title="Insert table"
+                title={msg('insertTable')}
                 className={toolButtonClass}
               >
                 <Table2 size={15} />
@@ -1039,21 +1041,21 @@ export default function DocumentPreview({
               <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
                 <button
                   onMouseDown={(e) => { e.preventDefault(); insertSlide() }}
-                  title="Insert slide after"
+                  title={msg('insertSlideAfter')}
                   className={toolButtonClass}
                 >
                   <Plus size={15} />
                 </button>
                 <button
                   onMouseDown={(e) => { e.preventDefault(); duplicateSlide() }}
-                  title="Duplicate slide"
+                  title={msg('duplicateSlide')}
                   className={toolButtonClass}
                 >
                   <Copy size={15} />
                 </button>
                 <button
                   onMouseDown={(e) => { e.preventDefault(); deleteSlide() }}
-                  title="Delete slide"
+                  title={msg('deleteSlide')}
                   className={`${toolButtonClass} hover:text-red-500`}
                   disabled={(doc.structure as import('../types').PptxStructure).slides.length <= 1}
                 >
@@ -1076,7 +1078,7 @@ export default function DocumentPreview({
               onAuxClick={swallowPointerEvent}
               onContextMenu={swallowPointerEvent}
               disabled={!hasActiveEditor && !canUndo}
-              title="Undo (⌘Z)"
+              title={`${msg('undo')} (⌘Z)`}
               className={toolButtonClass}
             >
               <Undo2 size={15} />
@@ -1092,7 +1094,7 @@ export default function DocumentPreview({
               onAuxClick={swallowPointerEvent}
               onContextMenu={swallowPointerEvent}
               disabled={!hasActiveEditor && !canRedo}
-              title="Redo (⌘⇧Z)"
+              title={`${msg('redo')} (⌘⇧Z)`}
               className={toolButtonClass}
             >
               <Redo2 size={15} />
@@ -1102,14 +1104,14 @@ export default function DocumentPreview({
 
         <div className="ml-auto flex items-center gap-2">
           {hasPendingEdit ? (
-            <span className="text-xs font-medium text-amber-600 select-none">Unsaved changes</span>
+            <span className="text-xs font-medium text-amber-600 select-none">{msg('unsavedChanges')}</span>
           ) : hasActiveEditor ? (
-            <span className="text-xs text-gray-400 select-none">Editing</span>
+            <span className="text-xs text-gray-400 select-none">{msg('editing')}</span>
           ) : null}
           <button
             onMouseDown={(e) => { e.preventDefault(); handleManualSave() }}
             disabled={!canSave}
-            title="Save now (⌘S)"
+            title={`${msg('saveNow')} (⌘S)`}
             className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors select-none ${
               hasPendingEdit
                 ? 'bg-blue-500 text-white hover:bg-blue-600'
@@ -1117,10 +1119,10 @@ export default function DocumentPreview({
                 ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 : 'bg-gray-100 text-gray-300 cursor-not-allowed'
             }`}
-          >
-            <Save size={14} />
-            Save
-          </button>
+            >
+              <Save size={14} />
+              {msg('save')}
+            </button>
         </div>
       </div>
 
@@ -1154,7 +1156,7 @@ export default function DocumentPreview({
           onMouseLeave={() => setHoverCell(null)}
         >
           <div className="mb-2 text-center text-xs text-gray-500 min-h-[1rem]">
-            {hoverCell ? `${hoverCell.r} × ${hoverCell.c} Table` : 'Insert table'}
+            {hoverCell ? msg('tableSize', { rows: hoverCell.r, cols: hoverCell.c }) : msg('insertTableLabel')}
           </div>
           <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(8, 1.25rem)' }}>
             {Array.from({ length: 8 * 8 }, (_, i) => {
@@ -1328,7 +1330,7 @@ export default function DocumentPreview({
       <div className="bg-white border-t border-gray-200 shadow-lg px-8 py-4 flex-shrink-0">
         <div className="max-w-3xl mx-auto flex flex-col gap-2">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            {editing.cellRef ? 'Edit cell' : isTextDocument ? (isMarkdown ? 'Edit markdown block' : 'Edit paragraph') : 'Edit shape'}
+            {editing.cellRef ? msg('editCell') : isTextDocument ? (isMarkdown ? msg('editMarkdownBlock') : msg('editParagraph')) : msg('editShape')}
           </div>
           <textarea
             ref={editTextareaRef}
@@ -1350,19 +1352,19 @@ export default function DocumentPreview({
             }}
           />
           <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">{isMarkdown && isManual ? 'Markdown source is edited as plain text. ⌘ Enter to save · Esc to cancel' : '⌘ Enter to save · Esc to cancel'}</p>
+            <p className="text-xs text-gray-400">{isMarkdown && isManual ? msg('markdownEditHelp') : msg('genericEditHelp')}</p>
             <div className="flex gap-2">
               <button
                 onClick={cancelEdit}
                 className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
               >
-                Cancel
+                {msg('cancel')}
               </button>
               <button
                 onClick={saveEdit}
                 className="px-3 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors"
               >
-                Save
+                {msg('save')}
               </button>
             </div>
           </div>
