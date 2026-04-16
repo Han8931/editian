@@ -5,6 +5,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.text.run import Run
 
 
 _ALIGN_MAP = {
@@ -195,14 +196,38 @@ def _delete_paragraph(para: Any) -> None:
         parent.remove(p_el)
 
 
+def _visible_runs(para: Any) -> list:
+    """Return all Run objects in *para*, including those nested inside
+    <w:hyperlink> and <w:ins> elements, but excluding runs inside <w:del>
+    (deleted/tracked-removal text that should not be edited)."""
+    result = []
+    for r in para._p.iter(qn('w:r')):
+        # Walk up to see if this run lives inside a <w:del> ancestor.
+        ancestor = r.getparent()
+        in_del = False
+        while ancestor is not None and ancestor is not para._p:
+            if ancestor.tag == qn('w:del'):
+                in_del = True
+                break
+            ancestor = ancestor.getparent()
+        if not in_del:
+            result.append(Run(r, para))
+    return result
+
+
 def _set_paragraph_text(para: Any, text: str, font_name: str | None = None, font_size: float | None = None,
                         align: str | None = None, bold: bool | None = None, italic: bool | None = None,
                         underline: bool | None = None, strike: bool | None = None, bullet: bool | None = None) -> None:
-    if para.runs:
-        para.runs[0].text = text
-        for run in para.runs[1:]:
+    # Use _visible_runs so we also reach runs nested inside <w:hyperlink> and
+    # <w:ins> elements — para.runs only exposes direct <w:r> children, which
+    # means paragraphs whose text lives exclusively in a hyperlink or tracked
+    # insertion would otherwise have their new text *appended* (doubled) instead
+    # of replacing the original.
+    runs = _visible_runs(para)
+    if runs:
+        runs[0].text = text
+        for run in runs[1:]:
             run.text = ""
-        runs = para.runs
     else:
         runs = [para.add_run(text)]
 

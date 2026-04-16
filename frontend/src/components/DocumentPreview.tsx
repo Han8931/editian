@@ -458,7 +458,11 @@ export default function DocumentPreview({
     const formatting = captureFormatting(ref.el)
     if (revised === original && !formattingChanged(ref.originalFormatting, formatting)) return
 
-    // Advance the baseline so the next save compares from here, not the start
+    // Advance the baseline ONLY after we know this revision has been dispatched.
+    // If commitDocxEdit fires before the API returns it will re-compare from
+    // here and skip an unnecessary duplicate, which is fine. If the API call
+    // fails the error banner is shown; the next keypress resets hasPendingEdit
+    // so the user knows a retry is needed.
     ref.original = revised
     ref.originalFormatting = formatting
     setHasPendingEdit(false)
