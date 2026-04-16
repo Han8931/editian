@@ -2,26 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Scoped prose styles for DOCX HTML — inline styles from the document take precedence */
-.docx-preview { font-family: 'Calibri', 'Arial', sans-serif; font-size: 11pt; color: #1f2937; line-height: 1.6; }
-.docx-preview h1 { font-size: 2em;   font-weight: 700; margin-top: 1.25em; margin-bottom: 0.5em; }
-.docx-preview h2 { font-size: 1.5em; font-weight: 700; margin-top: 1em;    margin-bottom: 0.4em; }
-.docx-preview h3 { font-size: 1.25em; font-weight: 600; margin-top: 0.9em; margin-bottom: 0.3em; }
-.docx-preview h4 { font-size: 1.1em; font-weight: 600; margin-top: 0.8em; margin-bottom: 0.3em; }
+/* Scoped prose styles for rendered document HTML */
+.docx-preview,
+.markdown-preview { font-family: 'Calibri', 'Arial', sans-serif; font-size: 11pt; color: #1f2937; line-height: 1.6; }
+.markdown-preview { font-family: 'Georgia', 'Times New Roman', serif; }
+.docx-preview h1,
+.markdown-preview h1 { font-size: 2em;   font-weight: 700; margin-top: 1.25em; margin-bottom: 0.5em; }
+.docx-preview h2,
+.markdown-preview h2 { font-size: 1.5em; font-weight: 700; margin-top: 1em;    margin-bottom: 0.4em; }
+.docx-preview h3,
+.markdown-preview h3 { font-size: 1.25em; font-weight: 600; margin-top: 0.9em; margin-bottom: 0.3em; }
+.docx-preview h4,
+.markdown-preview h4 { font-size: 1.1em; font-weight: 600; margin-top: 0.8em; margin-bottom: 0.3em; }
 .docx-preview h5,
-.docx-preview h6 { font-size: 1em;   font-weight: 600; margin-top: 0.7em; margin-bottom: 0.2em; }
-.docx-preview p  { margin-top: 0; margin-bottom: 0.6em; }
-.docx-preview ul { list-style-type: disc;    margin: 0.4em 0; }
-.docx-preview ol { list-style-type: decimal; margin: 0.4em 0; }
-.docx-preview li { margin-bottom: 0.2em; }
-.docx-preview strong { font-weight: 700; }
-.docx-preview em     { font-style: italic; }
-.docx-preview u      { text-decoration: underline; }
-.docx-preview s      { text-decoration: line-through; }
-.docx-preview a      { color: #2563eb; text-decoration: underline; }
-.docx-preview table  { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+.docx-preview h6,
+.markdown-preview h5,
+.markdown-preview h6 { font-size: 1em;   font-weight: 600; margin-top: 0.7em; margin-bottom: 0.2em; }
+.docx-preview p,
+.markdown-preview p { margin-top: 0; margin-bottom: 0.6em; }
+.docx-preview ul,
+.markdown-preview ul { list-style-type: disc; margin: 0.4em 0; padding-left: 1.5em; }
+.docx-preview ol,
+.markdown-preview ol { list-style-type: decimal; margin: 0.4em 0; padding-left: 1.5em; }
+.docx-preview li,
+.markdown-preview li { margin-bottom: 0.2em; }
+.docx-preview strong,
+.markdown-preview strong { font-weight: 700; }
+.docx-preview em,
+.markdown-preview em { font-style: italic; }
+.docx-preview u,
+.markdown-preview u { text-decoration: underline; }
+.docx-preview s,
+.markdown-preview s { text-decoration: line-through; }
+.docx-preview a,
+.markdown-preview a { color: #2563eb; text-decoration: underline; }
+.docx-preview table,
+.markdown-preview table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
 .docx-preview td,
-.docx-preview th     { border: 1px solid #d1d5db; padding: 6px 12px; vertical-align: top; }
+.docx-preview th,
+.markdown-preview td,
+.markdown-preview th { border: 1px solid #d1d5db; padding: 6px 12px; vertical-align: top; }
+.markdown-preview blockquote { border-left: 3px solid #cbd5e1; margin: 0 0 1em; padding-left: 1em; color: #475569; }
+.markdown-preview pre { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 0.9em 1em; overflow-x: auto; margin-bottom: 1em; }
+.markdown-preview code { font-family: 'SFMono-Regular', 'Menlo', monospace; font-size: 0.95em; }
+.markdown-preview :not(pre) > code { background: #e2e8f0; color: #0f172a; padding: 0.12em 0.32em; border-radius: 4px; }
+.markdown-preview hr { border: 0; border-top: 1px solid #d1d5db; margin: 1.2em 0; }
+.markdown-block { border-radius: 6px; padding: 2px 4px; margin: 0 -4px 0.45em; }
 
 /* Revise button shimmer animation */
 @keyframes shimmer {

@@ -291,6 +291,8 @@ export default function App() {
     const ext  = name.split('.').pop()?.toLowerCase() ?? 'docx'
     const mime = ext === 'pptx'
       ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      : ext === 'md' || ext === 'markdown'
+      ? 'text/markdown'
       : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
     if ('showSaveFilePicker' in window) {

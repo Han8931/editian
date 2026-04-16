@@ -15,8 +15,10 @@ from pydantic import BaseModel
 from typing import Optional
 
 from parsers.docx_parser import parse_docx, get_docx_html, get_cell_text, get_table_cells
+from parsers.markdown_parser import parse_markdown
 from parsers.pptx_parser import parse_pptx, get_pptx_cell_text, get_pptx_table_cells
 from writers.docx_writer import apply_docx_revisions
+from writers.markdown_writer import apply_markdown_revisions
 from writers.pptx_writer import apply_pptx_revisions
 from llm import run_agent_loop, run_chat, run_text_revision, stream_chat
 from storage import S3DocumentStorage, StorageConfigError
@@ -246,13 +248,14 @@ def _invalidate_slide_cache(file_id: str) -> None:
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     ext = Path(file.filename).suffix.lower()
-    if ext not in (".docx", ".pptx"):
-        raise HTTPException(400, "Only .docx and .pptx files are supported.")
+    if ext not in (".docx", ".pptx", ".md", ".markdown"):
+        raise HTTPException(400, "Only .docx, .pptx, and markdown files are supported.")
 
     file_id = str(uuid.uuid4())
     file_path = FILES_DIR / f"{file_id}{ext}"
     file_path.write_bytes(await file.read())
-    file_info = {"path": str(file_path), "type": ext[1:], "name": file.filename}
+    file_type = "markdown" if ext in (".md", ".markdown") else ext[1:]
+    file_info = {"path": str(file_path), "type": file_type, "name": file.filename}
     if _storage_backend == "s3":
         storage = _require_storage()
         s3_key = storage.build_key(file_id, file.filename)
@@ -289,17 +292,19 @@ async def revise(req: ReviseRequest):
 _SYSTEM_PROMPT = (
     "You are a document editor. Apply the user's instruction exactly. "
     "— To REVISE existing content: call revise_text, revise_paragraph, or revise_shape for each item that needs changing. "
-    "  When multiple DOCX paragraphs are selected, prefer revise_paragraphs_batch. "
+    "  When multiple text-document paragraphs are selected, prefer revise_paragraphs_batch. "
     "  Items labeled [context] are reference only — do NOT revise them. "
     "  Only revise items with a numeric label (e.g. [3], [shape=2]). "
     "  For formatting-only changes, call the tool with the original text unchanged and set the formatting params. "
-    "  revised_text must be plain text — never include HTML, XML, or markup. "
+    "  For DOCX and PPTX, revised_text must be plain text. "
+    "  For Markdown files, revised_text must be markdown source text. "
+    "  Never include HTML or XML unless the original content already uses it. "
     "  Alignment: left | center | right | justify. "
-    "— For DOCX, to ADD a new paragraph: call insert_paragraph with the target paragraph index and text. "
+    "— For DOCX or Markdown, to ADD a new paragraph/block: call insert_paragraph with the target paragraph index and text. "
     "  Use paragraph_index=-1 to append at the end. "
-    "  When the user wants one new paragraph below a selected DOCX passage, prefer insert_paragraph_after_selection. "
-    "— For DOCX, to DELETE an existing paragraph: call delete_paragraph with that paragraph index. "
-    "— For DOCX, to MERGE the selected paragraphs into one replacement paragraph: call merge_selected_paragraphs. "
+    "  When the user wants one new paragraph below a selected text passage, prefer insert_paragraph_after_selection. "
+    "— For DOCX or Markdown, to DELETE an existing paragraph/block: call delete_paragraph with that paragraph index. "
+    "— For DOCX or Markdown, to MERGE the selected paragraphs into one replacement paragraph: call merge_selected_paragraphs. "
     "— To ADD a new slide: call add_slide with a clear title and body. "
     "  Use after_slide_index=-1 to append at the end, or a specific 0-based index to insert after that slide. "
     "— To ADD new text to an existing slide: call add_text_box with the slide_index and text. "
@@ -363,10 +368,15 @@ _FORMAT_PROPS = {
     "underline": _UNDERLINE_PROP,
 }
 
+_REVISED_TEXT_DESCRIPTION = (
+    "The revised text. Use plain text for DOCX/PPTX and markdown source for Markdown files. "
+    "Never return HTML or XML."
+)
+
 _REVISE_TEXT_TOOL = _tool(
     "revise_text",
     "Provide the revised text and any formatting changes (font_name, font_size, align, bold, italic, underline).",
-    {"revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"}, **_FORMAT_PROPS},
+    {"revised_text": {"type": "string", "description": _REVISED_TEXT_DESCRIPTION}, **_FORMAT_PROPS},
     ["revised_text"],
 )
 
@@ -375,7 +385,7 @@ _REVISE_PARAGRAPH_TOOL = _tool(
     "Update a paragraph's text and/or formatting (font_name, font_size, align, bold, italic, underline).",
     {
         "index": {"type": "integer", "description": "Paragraph index (as shown in brackets)"},
-        "revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"},
+        "revised_text": {"type": "string", "description": _REVISED_TEXT_DESCRIPTION},
         **_FORMAT_PROPS,
     },
     ["index", "revised_text"],
@@ -391,7 +401,7 @@ _REVISE_PARAGRAPHS_BATCH_TOOL = _tool(
                 "type": "object",
                 "properties": {
                     "index": {"type": "integer", "description": "Paragraph index (as shown in brackets)"},
-                    "revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"},
+                    "revised_text": {"type": "string", "description": _REVISED_TEXT_DESCRIPTION},
                     **_FORMAT_PROPS,
                 },
                 "required": ["index", "revised_text"],
@@ -407,7 +417,7 @@ _REVISE_CELL_TOOL = _tool(
     {
         "row_index": {"type": "integer"},
         "cell_index": {"type": "integer"},
-        "revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"},
+        "revised_text": {"type": "string", "description": _REVISED_TEXT_DESCRIPTION},
         **_FORMAT_PROPS,
     },
     ["row_index", "cell_index", "revised_text"],
@@ -429,7 +439,7 @@ _INSERT_PARAGRAPH_TOOL = _tool(
 
 _INSERT_PARAGRAPH_AFTER_SELECTION_TOOL = _tool(
     "insert_paragraph_after_selection",
-    "Insert one new paragraph immediately below the selected DOCX paragraph selection.",
+    "Insert one new paragraph immediately below the selected text-document paragraph selection.",
     {
         "text": {"type": "string", "description": "Text for the new paragraph to place below the selection."},
         **_FORMAT_PROPS,
@@ -439,9 +449,9 @@ _INSERT_PARAGRAPH_AFTER_SELECTION_TOOL = _tool(
 
 _MERGE_SELECTED_PARAGRAPHS_TOOL = _tool(
     "merge_selected_paragraphs",
-    "Merge the selected DOCX paragraphs into one replacement paragraph.",
+    "Merge the selected text-document paragraphs into one replacement paragraph.",
     {
-        "revised_text": {"type": "string", "description": "The merged plain text that should replace the selected paragraphs."},
+        "revised_text": {"type": "string", "description": _REVISED_TEXT_DESCRIPTION},
         **_FORMAT_PROPS,
     },
     ["revised_text"],
@@ -482,7 +492,7 @@ _REVISE_SHAPE_TOOL = _tool(
     {
         "slide_index": {"type": "integer"},
         "shape_index": {"type": "integer"},
-        "revised_text": {"type": "string", "description": "The revised plain text (no HTML or markup)"},
+        "revised_text": {"type": "string", "description": _REVISED_TEXT_DESCRIPTION},
         **_FORMAT_PROPS,
     },
     ["slide_index", "shape_index", "revised_text"],
@@ -519,12 +529,13 @@ async def _do_revise(req, file_type, file_path, llm):
         return run_text_revision(
             original, req.instruction,
             llm.provider, llm.model, llm.base_url, llm.api_key, llm.timeout,
+            allow_markdown=file_type == "markdown",
         )
 
     revisions = []
 
-    if file_type == "docx":
-        structure = parse_docx(file_path)
+    if file_type in ("docx", "markdown"):
+        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
         paragraphs = structure["paragraphs"]
 
         if req.scope.type == "document":
@@ -755,7 +766,7 @@ async def _do_revise(req, file_type, file_path, llm):
                                 "revised": "",
                             })
 
-        elif req.scope.type == "table_cell":
+        elif req.scope.type == "table_cell" and file_type == "docx":
             table_index = req.scope.table_index or 0
             row_index   = req.scope.row_index or 0
             cell_index  = req.scope.cell_index or 0
@@ -792,7 +803,7 @@ async def _do_revise(req, file_type, file_path, llm):
                             "underline": args.get("underline"),
                         })
 
-        elif req.scope.type == "table":
+        elif req.scope.type == "table" and file_type == "docx":
             table_index = req.scope.table_index or 0
             cells = get_table_cells(file_path, table_index)
             cells_text = "\n".join(
@@ -1117,6 +1128,8 @@ async def apply(req: ApplyRequest):
 
     if file_type == "docx":
         apply_docx_revisions(file_path, file_path, rev_dicts)
+    elif file_type == "markdown":
+        apply_markdown_revisions(file_path, file_path, rev_dicts)
     else:
         apply_pptx_revisions(file_path, file_path, rev_dicts)
 
@@ -1294,14 +1307,14 @@ def _extract_selected_text(
     if scope.type == "document":
         return None
 
-    if file_type == "docx":
-        structure = parse_docx(file_path)
+    if file_type in ("docx", "markdown"):
+        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
         paragraphs = structure["paragraphs"]
         if scope.type == "paragraphs" and scope.paragraph_indices:
             idx_set = set(scope.paragraph_indices)
             lines = [p["text"] for p in paragraphs if p["index"] in idx_set and p["text"].strip()]
             return "\n\n".join(lines) or None
-        if scope.type in ("table_cell", "table"):
+        if file_type == "docx" and scope.type in ("table_cell", "table"):
             table_index = scope.table_index or 0
             if scope.type == "table_cell":
                 return get_cell_text(file_path, table_index, scope.row_index or 0, scope.cell_index or 0) or None
@@ -1343,8 +1356,8 @@ async def chat(req: ChatRequest):
     file_path = _ensure_local_file(req.file_id)
 
     # Extract full document text as context
-    if file_type == "docx":
-        structure = parse_docx(file_path)
+    if file_type in ("docx", "markdown"):
+        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
         doc_text = "\n\n".join(
             p["text"] for p in structure["paragraphs"] if p["text"].strip()
         )
@@ -1418,6 +1431,12 @@ def _build_response(file_id: str) -> dict:
 
     if file_type == "docx":
         return {**base, "file_type": "docx", "structure": parse_docx(file_path), "html": get_docx_html(file_path)}
+    if file_type == "markdown":
+        return {
+            **base,
+            "file_type": "markdown",
+            "structure": parse_markdown(file_path),
+        }
     else:
         return {
             **base,

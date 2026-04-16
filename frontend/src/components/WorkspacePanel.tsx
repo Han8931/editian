@@ -41,12 +41,16 @@ function rootWorkspacesIn(all: Workspace[], directoryId: string | null): Workspa
   )
 }
 
-function FileBadge({ type }: { type: 'docx' | 'pptx' }) {
+function FileBadge({ type }: { type: 'docx' | 'pptx' | 'markdown' }) {
   return (
     <span className={`flex-shrink-0 text-[9px] font-bold uppercase tracking-wide px-1 py-px rounded ${
-      type === 'docx' ? 'bg-blue-900/60 text-blue-300' : 'bg-orange-900/60 text-orange-300'
+      type === 'docx'
+        ? 'bg-blue-900/60 text-blue-300'
+        : type === 'pptx'
+        ? 'bg-orange-900/60 text-orange-300'
+        : 'bg-emerald-900/60 text-emerald-300'
     }`}>
-      {type}
+      {type === 'markdown' ? 'md' : type}
     </span>
   )
 }

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   AlignCenter,
   AlignLeft,
@@ -18,7 +20,7 @@ import {
   Underline,
   Undo2,
 } from 'lucide-react'
-import type { UploadResponse, PptxStructure, DocxStructure, Revision, ParagraphAlign, Shape } from '../types'
+import type { UploadResponse, PptxStructure, TextDocumentStructure, Revision, ParagraphAlign, Shape } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -353,6 +355,13 @@ function formattingChanged(a: CapturedFormatting | undefined, b: CapturedFormatt
     || !sameValue(a?.bullet, b.bullet)
 }
 
+function normalizeEditedText(fileType: UploadResponse['file_type'], value: string): string {
+  if (fileType === 'markdown') {
+    return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, '')
+  }
+  return value.trim()
+}
+
 function swallowPointerEvent(event: React.SyntheticEvent) {
   event.preventDefault()
   event.stopPropagation()
@@ -374,6 +383,8 @@ export default function DocumentPreview({
   canRedo = false,
 }: Props) {
   const isManual = mode === 'manual'
+  const isMarkdown = doc.file_type === 'markdown'
+  const isTextDocument = doc.file_type === 'docx' || doc.file_type === 'markdown'
 
   const isDragging = useRef(false)
   const anchorIdx = useRef<number | null>(null)
@@ -410,22 +421,22 @@ export default function DocumentPreview({
 
   // Reset when the document itself changes (workspace switch / upload)
   useEffect(() => {
-    if (manualEditRef.current) commitDocxEdit()
+    if (doc.file_type === 'docx' && manualEditRef.current) commitDocxEdit()
     setDisplayHtml(doc.html ?? '')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.file_id])
 
   // Update display when doc content changes (after API edits), but NOT while editing
   useEffect(() => {
-    if (manualEditRef.current) return
+    if (doc.file_type === 'docx' && manualEditRef.current) return
     setDisplayHtml(doc.html ?? '')
-  }, [doc.html])
+  }, [doc.file_type, doc.html])
 
   // Commit any pending DOCX edit when switching from manual → AI mode
   useEffect(() => {
-    if (!isManual && manualEditRef.current) commitDocxEdit()
+    if (!isManual && doc.file_type === 'docx' && manualEditRef.current) commitDocxEdit()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isManual])
+  }, [doc.file_type, isManual])
 
   useEffect(() => {
     if (!showFontSizeMenu && !showTablePicker) return
@@ -765,6 +776,70 @@ export default function DocumentPreview({
 
   function ManualToolbar() {
     if (!isManual) return null
+    if (isMarkdown) {
+      const canSave = !!editing && normalizeEditedText(doc.file_type, editing.text) !== normalizeEditedText(doc.file_type, editing.original)
+      const btnBase = 'h-8 min-w-8 inline-flex items-center justify-center rounded-lg px-2 transition-colors text-gray-700 select-none'
+      const toolButtonClass = `${btnBase} hover:bg-white`
+
+      return (
+        <div className="relative flex items-center px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0 h-12">
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                swallowPointerEvent(e)
+                if (e.button !== 0) return
+                onUndo?.()
+              }}
+              onClick={swallowPointerEvent}
+              onAuxClick={swallowPointerEvent}
+              onContextMenu={swallowPointerEvent}
+              disabled={!canUndo}
+              title="Undo"
+              className={toolButtonClass}
+            >
+              <Undo2 size={15} />
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                swallowPointerEvent(e)
+                if (e.button !== 0) return
+                onRedo?.()
+              }}
+              onClick={swallowPointerEvent}
+              onAuxClick={swallowPointerEvent}
+              onContextMenu={swallowPointerEvent}
+              disabled={!canRedo}
+              title="Redo"
+              className={toolButtonClass}
+            >
+              <Redo2 size={15} />
+            </button>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            {editing ? (
+              <span className="text-xs text-gray-400 select-none">Editing markdown source</span>
+            ) : null}
+            <button
+              onMouseDown={(e) => { e.preventDefault(); saveEdit() }}
+              disabled={!canSave}
+              title="Save block"
+              className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors select-none ${
+                canSave
+                  ? 'bg-blue-500 text-white hover:bg-blue-600'
+                  : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+              }`}
+            >
+              <Save size={14} />
+              Save
+            </button>
+          </div>
+        </div>
+      )
+    }
+
     const hasActiveEditor = manualEditorActive
     const canSave = hasPendingEdit || hasActiveEditor
 
@@ -1196,15 +1271,16 @@ export default function DocumentPreview({
       isManual && doc.file_type === 'pptx'
         ? manualShapeElementRef.current?.innerText ?? manualShapeDraftRef.current ?? editing.text
         : editing.text
-    ).trim()
-    const originalText = editing.original.trim()
+    )
+    const normalizedRevisedText = normalizeEditedText(doc.file_type, revisedText)
+    const normalizedOriginalText = normalizeEditedText(doc.file_type, editing.original)
     const formatting: CapturedFormatting = (
       isManual && doc.file_type === 'pptx' && manualShapeElementRef.current
         ? captureFormatting(manualShapeElementRef.current)
         : {}
     )
 
-    if (revisedText !== originalText || formattingChanged(editing.originalFormatting, formatting)) {
+    if (normalizedRevisedText !== normalizedOriginalText || formattingChanged(editing.originalFormatting, formatting)) {
       let scope: Revision['scope']
       if (editing.cellRef) {
         scope = doc.file_type === 'pptx'
@@ -1223,10 +1299,12 @@ export default function DocumentPreview({
             }
       } else if (doc.file_type === 'docx') {
         scope = { type: 'paragraphs', paragraph_indices: [editing.index] }
+      } else if (doc.file_type === 'markdown') {
+        scope = { type: 'paragraphs', paragraph_indices: [editing.index] }
       } else {
         scope = { type: 'shape', slide_index: currentSlide, shape_indices: [editing.index] }
       }
-      onDirectEdit?.({ scope, original: originalText, revised: revisedText, ...formatting })
+      onDirectEdit?.({ scope, original: normalizedOriginalText, revised: normalizedRevisedText, ...formatting })
     }
     manualShapeElementRef.current = null
     manualShapeDraftRef.current = null
@@ -1245,26 +1323,34 @@ export default function DocumentPreview({
 
   // AI-mode bottom panel (not shown in manual mode)
   function EditingPanel() {
-    if (!editing || isManual) return null
+    if (!editing || (isManual && !isMarkdown)) return null
     return (
       <div className="bg-white border-t border-gray-200 shadow-lg px-8 py-4 flex-shrink-0">
         <div className="max-w-3xl mx-auto flex flex-col gap-2">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            {editing.cellRef ? 'Edit cell' : doc.file_type === 'docx' ? 'Edit paragraph' : 'Edit shape'}
+            {editing.cellRef ? 'Edit cell' : isTextDocument ? (isMarkdown ? 'Edit markdown block' : 'Edit paragraph') : 'Edit shape'}
           </div>
           <textarea
             ref={editTextareaRef}
             className="w-full border border-blue-300 rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
             rows={Math.max(2, editing.text.split('\n').length + 1)}
             value={editing.text}
-            onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+            onChange={(e) => {
+              setEditing({ ...editing, text: e.target.value })
+              if (isMarkdown && isManual) {
+                setManualEditorActive(true)
+                setHasPendingEdit(
+                  normalizeEditedText(doc.file_type, e.target.value) !== normalizeEditedText(doc.file_type, editing.original),
+                )
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Escape') { cancelEdit(); e.preventDefault() }
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { saveEdit(); e.preventDefault() }
             }}
           />
           <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">⌘ Enter to save · Esc to cancel</p>
+            <p className="text-xs text-gray-400">{isMarkdown && isManual ? 'Markdown source is edited as plain text. ⌘ Enter to save · Esc to cancel' : '⌘ Enter to save · Esc to cancel'}</p>
             <div className="flex gap-2">
               <button
                 onClick={cancelEdit}
@@ -1286,9 +1372,11 @@ export default function DocumentPreview({
   }
 
   // ── DOCX ────────────────────────────────────────────────────────────────
-  if (doc.file_type === 'docx') {
-    const { paragraphs } = doc.structure as DocxStructure
+  if (isTextDocument) {
+    const { paragraphs } = doc.structure as TextDocumentStructure
+    const paragraphMap = new Map(paragraphs.map((p) => [p.index, p]))
     const structureIndices = new Set(paragraphs.map((p) => p.index))
+    const previewClass = doc.file_type === 'markdown' ? 'markdown-preview' : 'docx-preview'
 
     const highlightCSS =
       !isManual && selectedIndices.length > 0
@@ -1309,7 +1397,7 @@ export default function DocumentPreview({
         : ''
 
     // In manual mode paragraphs and cells should show a text cursor, not a pointer
-    const manualCursorCSS = isManual ? '[data-para-index], [data-cell-ref] { cursor: text; }' : ''
+    const manualCursorCSS = isManual && doc.file_type === 'docx' ? '[data-para-index], [data-cell-ref] { cursor: text; }' : ''
 
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
@@ -1321,6 +1409,25 @@ export default function DocumentPreview({
             className={`h-full overflow-auto p-8 ${isManual ? '' : 'select-none'}`}
             onMouseDown={(e) => {
               if (isManual) {
+                if (isMarkdown) {
+                  const el = (e.target as Element).closest('[data-para-index]') as HTMLElement | null
+                  if (!el) return
+                  const idx = Number(el.getAttribute('data-para-index'))
+                  const paragraph = paragraphMap.get(idx)
+                  if (!paragraph) return
+                  if (editing && editing.index !== idx) {
+                    saveEdit()
+                  }
+                  setManualEditorActive(true)
+                  setHasPendingEdit(false)
+                  setEditing({
+                    index: idx,
+                    original: paragraph.text,
+                    text: paragraph.text,
+                    originalFormatting: {},
+                  })
+                  return
+                }
                 // Table cell click
                 const cellEl = (e.target as Element).closest('[data-cell-ref]') as HTMLElement | null
                 if (cellEl) {
@@ -1370,6 +1477,7 @@ export default function DocumentPreview({
             onMouseUp={isManual ? undefined : stopDrag}
             onMouseLeave={isManual ? undefined : stopDrag}
             onBlur={isManual ? (e: React.FocusEvent<HTMLDivElement>) => {
+              if (doc.file_type !== 'docx') return
               const ref = manualEditRef.current
               if (!ref) return
               if (toolbarInteractionRef.current) return
@@ -1380,6 +1488,17 @@ export default function DocumentPreview({
               commitDocxEdit()
             } : undefined}
             onKeyDown={isManual ? (e) => {
+              if (isMarkdown) {
+                if (e.key === 'Escape' && editing) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  cancelEdit()
+                } else if (e.key === 's' && (e.metaKey || e.ctrlKey) && editing) {
+                  e.preventDefault()
+                  saveEdit()
+                }
+                return
+              }
               handleManualHistoryShortcut(e)
               if (e.defaultPrevented) return
               if (e.key === 'Escape' && manualEditRef.current) {
@@ -1397,10 +1516,26 @@ export default function DocumentPreview({
             {editHighlightCSS && <style>{editHighlightCSS}</style>}
             {manualCursorCSS && <style>{manualCursorCSS}</style>}
             <div
-              className="max-w-3xl mx-auto bg-white shadow-md rounded-xl p-12 min-h-[calc(100vh-8rem)] docx-preview"
+              className={`max-w-3xl mx-auto bg-white shadow-md rounded-xl p-12 min-h-[calc(100vh-8rem)] ${previewClass}`}
               style={{ zoom: `${zoom}%` }}
             >
-              <div dangerouslySetInnerHTML={{ __html: displayHtml }} />
+              {isMarkdown ? (
+                <div>
+                  {paragraphs.map((paragraph) => (
+                    <div
+                      key={paragraph.index}
+                      data-para-index={paragraph.index}
+                      className="markdown-block"
+                    >
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {paragraph.text}
+                      </ReactMarkdown>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div dangerouslySetInnerHTML={{ __html: displayHtml }} />
+              )}
             </div>
           </div>
         </div>

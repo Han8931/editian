@@ -73,7 +73,7 @@ export interface Slide {
   background_image_src?: string | null
 }
 
-export interface DocxStructure {
+export interface TextDocumentStructure {
   paragraphs: Paragraph[]
   total: number
   page_count?: number
@@ -88,10 +88,10 @@ export interface PptxStructure {
 
 export interface UploadResponse {
   file_id: string
-  file_type: 'docx' | 'pptx'
+  file_type: 'docx' | 'pptx' | 'markdown'
   name: string
   html?: string
-  structure: DocxStructure | PptxStructure
+  structure: TextDocumentStructure | PptxStructure
   can_undo: boolean
   can_redo: boolean
   slide_render_version?: string

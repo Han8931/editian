@@ -259,17 +259,24 @@ def run_text_revision(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     timeout: float = 120,
+    allow_markdown: bool = False,
 ) -> str:
     """
     Tool-free fallback for models that can't produce structured tool calls.
-    Ask the model to output the revised text directly as plain text.
+    Ask the model to output the revised text directly.
     """
     lm = _get_model(provider, model, base_url, api_key, timeout)
+    output_rule = (
+        "No explanation. No quotes around the output. "
+        "Output valid markdown source text."
+        if allow_markdown
+        else "No explanation. No quotes around the output. No markdown."
+    )
     messages: list[BaseMessage] = [
         SystemMessage(
             "You are a text editor. Apply the instruction to the given text. "
             "Output ONLY the revised text. "
-            "No explanation. No quotes around the output. No markdown."
+            f"{output_rule}"
         ),
         HumanMessage(f"Text:\n{original_text}\n\nInstruction: {instruction}"),
     ]

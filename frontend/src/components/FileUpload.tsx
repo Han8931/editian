@@ -14,8 +14,8 @@ export default function FileUpload({ onUpload }: Props) {
 
   const handleFile = useCallback(async (file: File) => {
     const ext = file.name.split('.').pop()?.toLowerCase()
-    if (ext !== 'docx' && ext !== 'pptx') {
-      setError('Only .docx and .pptx files are supported.')
+    if (ext !== 'docx' && ext !== 'pptx' && ext !== 'md' && ext !== 'markdown') {
+      setError('Only .docx, .pptx, and markdown files are supported.')
       return
     }
     setLoading(true)
@@ -53,7 +53,7 @@ export default function FileUpload({ onUpload }: Props) {
         <input
           id="file-input"
           type="file"
-          accept=".docx,.pptx"
+          accept=".docx,.pptx,.md,.markdown,text/markdown"
           className="hidden"
           onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
         />
@@ -74,7 +74,7 @@ export default function FileUpload({ onUpload }: Props) {
               <div className="font-medium text-gray-700">Drop your file here</div>
               <div className="text-sm text-gray-400 mt-1">or click to browse</div>
             </div>
-            <div className="text-xs text-gray-400">.docx · .pptx</div>
+            <div className="text-xs text-gray-400">.docx · .pptx · .md</div>
           </>
         )}
       </div>

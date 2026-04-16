@@ -9,6 +9,7 @@ interface Props {
 
 export default function ModePanel({ doc, style }: Props) {
   const isPptx = doc.file_type === 'pptx'
+  const isMarkdown = doc.file_type === 'markdown'
 
   return (
     <aside className="flex-shrink-0 bg-white border-l border-gray-200 h-full flex flex-col" style={style}>
@@ -29,12 +30,12 @@ export default function ModePanel({ doc, style }: Props) {
         <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-blue-600 mb-2">How to edit</div>
           <div className="space-y-1.5 text-sm text-blue-900">
-            <p>Click on any {isPptx ? 'text box' : 'paragraph'} to place the cursor.</p>
-            <p>Type to edit — changes save automatically.</p>
+            <p>Click on any {isPptx ? 'text box' : isMarkdown ? 'markdown block' : 'paragraph'} to start editing.</p>
+            <p>{isMarkdown ? 'Edit the markdown source, then save the block.' : 'Type to edit — changes save automatically.'}</p>
             <p>
               Press{' '}
               <kbd className="px-1 py-0.5 bg-blue-100 rounded text-xs font-mono">Esc</kbd>
-              {' '}to discard changes to the current element.
+              {' '}to discard changes to the current {isMarkdown ? 'block' : 'element'}.
             </p>
           </div>
         </div>
@@ -49,7 +50,7 @@ export default function ModePanel({ doc, style }: Props) {
               ['Underline',   '⌘ U'],
               ['Undo',        '⌘ Z'],
               ['Cancel edit', 'Esc'],
-            ].map(([label, key]) => (
+            ].filter(([label]) => !isMarkdown || ['Undo', 'Cancel edit'].includes(label)).map(([label, key]) => (
               <div key={label} className="flex justify-between items-center">
                 <span className="text-gray-600">{label}</span>
                 <kbd className="px-1.5 py-0.5 bg-white border border-gray-200 rounded text-xs font-mono text-gray-700">{key}</kbd>
@@ -62,7 +63,8 @@ export default function ModePanel({ doc, style }: Props) {
         <div className="rounded-xl border border-gray-200 px-4 py-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Notes</div>
           <div className="space-y-2 text-sm text-gray-500">
-            <p>Block-level formatting (bold, italic, underline, font size) is preserved when the edited block uses one consistent style.</p>
+            {!isMarkdown && <p>Block-level formatting (bold, italic, underline, font size) is preserved when the edited block uses one consistent style.</p>}
+            {isMarkdown && <p>Markdown mode edits the underlying source text. Rich text controls do not apply to `.md` files.</p>}
             <p>Use <span className="font-medium text-gray-700">AI mode</span> for instruction-based revisions and batch edits.</p>
           </div>
         </div>

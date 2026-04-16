@@ -8,11 +8,11 @@
   Edit Word and PowerPoint files with AI, review every change, and keep full control.
 </p>
 
-Editian is a browser-based editor for `.docx` and `.pptx` files. Upload a document, describe what you want in plain language, review the before/after diff, and accept only the changes you want.
+Editian is a browser-based editor for `.docx`, `.pptx`, and markdown files. Upload a document, describe what you want in plain language, review the before/after diff, and accept only the changes you want.
 
 ## Why Use It?
 
-- Works with **Word and PowerPoint files**
+- Works with **Word, PowerPoint, and Markdown files**
 - Lets you **edit with natural-language instructions**
 - Shows a **diff before anything is applied**
 - Supports **local models with Ollama** or **hosted APIs like OpenAI**
@@ -29,6 +29,12 @@ Editian is a browser-based editor for `.docx` and `.pptx` files. Upload a docume
 - Summarize a selected section and place the summary below it
 - Merge multiple selected paragraphs into one
 - Edit tables
+
+### Markdown
+
+- Review rendered markdown while editing the underlying `.md` source by block
+- Revise a whole file or selected blocks with AI
+- Manually edit markdown blocks and keep undo/redo support
 
 ### PPTX
 
@@ -86,7 +92,7 @@ You can configure the provider from the settings panel inside the app.
 ## Basic Workflow
 
 1. Open `http://localhost:3000`
-2. Upload a `.docx` or `.pptx` file
+2. Upload a `.docx`, `.pptx`, or `.md` file
 3. Select a paragraph, table, shape, or slide, or leave nothing selected to edit a larger scope
 4. Enter an instruction such as `Paraphrase this paragraph` or `Make this slide more concise`
 5. Click **Revise**
