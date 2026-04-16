@@ -8,12 +8,19 @@ from typing import Optional
 
 _SOFFICE_CANDIDATES = (
     shutil.which("soffice"),
+    # Linux
+    "/usr/bin/soffice",
+    "/usr/lib/libreoffice/program/soffice",
+    # macOS
     "/Applications/LibreOffice.app/Contents/MacOS/soffice",
     "/Applications/OpenOffice.app/Contents/MacOS/soffice",
 )
 
 _PDFTOPPM_CANDIDATES = (
     shutil.which("pdftoppm"),
+    # Linux
+    "/usr/bin/pdftoppm",
+    # macOS (Homebrew)
     "/opt/homebrew/bin/pdftoppm",
     "/usr/local/bin/pdftoppm",
 )
