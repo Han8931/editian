@@ -133,25 +133,17 @@ export default function DiffViewer({ revision, index, onAccept, onReject }: Prop
                 </div>
               </div>
             )}
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-rose-600">Before</div>
-                  <span className="rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-rose-500">Original</span>
-                </div>
-                <div className="rounded-xl border border-rose-100 bg-white/80 p-3 text-sm leading-relaxed text-gray-600 whitespace-pre-wrap line-through decoration-rose-300 decoration-2">
-                  {revision.original || 'No original text'}
+            <div className="flex flex-col gap-2">
+              <div className="rounded-xl border border-rose-100 bg-rose-50/50 p-3">
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-400">Before</div>
+                <div className="text-sm leading-relaxed text-rose-900/60 whitespace-pre-wrap">
+                  <span className="line-through decoration-rose-300/70">{revision.original || 'No original text'}</span>
                 </div>
               </div>
-              <div
-                className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3"
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-600">After</div>
-                  <span className="rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium text-emerald-600">Revised</span>
-                </div>
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">After</div>
                 <div
-                  className="rounded-xl border border-emerald-100 bg-white/85 p-3 text-sm leading-relaxed text-gray-800 whitespace-pre-wrap shadow-sm"
+                  className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap"
                   style={{
                     ...(revision.font_name ? { fontFamily: revision.font_name } : {}),
                     ...(revision.font_size ? { fontSize: `${revision.font_size}pt` } : {}),

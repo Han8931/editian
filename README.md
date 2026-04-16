@@ -189,3 +189,7 @@ STORAGE_BACKEND=local
 - macOS and Linux are supported for the higher-fidelity PPTX renderer
 - The backend expects `soffice` and `pdftoppm` on the machine for the best PPTX output
 - All edits remain reviewable before you apply them
+
+### Todos
+- Stream
+- 
