@@ -7,7 +7,7 @@ import ModePanel from './components/ModePanel'
 import CompareMode from './components/CompareMode'
 import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
-import type { AppMode, CompareSlot, UploadResponse, Revision, Workspace, Directory } from './types'
+import type { AppMode, CompareSlot, UploadResponse, Revision, Workspace, Directory, PptxStructure, Shape, SlideParagraph } from './types'
 import editianLogo from '../../assets/editian_icon.svg'
 import { useI18n } from './i18n'
 
@@ -28,6 +28,68 @@ const LS_APP_MODE    = 'editian_app_mode'
 
 // Stored shape: minimal — no doc (too large for localStorage)
 interface StoredWorkspace { id: string; name: string; fileId: string | null; parentId?: string; directoryId?: string }
+
+function cloneForUi<T>(value: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(value)
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function buildOptimisticShapeParagraphs(shape: Shape, text: string): SlideParagraph[] {
+  const templateRun = shape.paragraphs[0]?.runs[0]
+  return text.split('\n').map((line) => ({
+    text: line,
+    align: shape.paragraphs[0]?.align,
+    bullet: false,
+    level: 0,
+    runs: [{
+      text: line,
+      bold: templateRun?.bold,
+      italic: templateRun?.italic,
+      underline: templateRun?.underline,
+      strike: templateRun?.strike,
+      font_name: templateRun?.font_name,
+      size: templateRun?.size,
+      color: templateRun?.color,
+    }],
+  }))
+}
+
+function applyOptimisticPptxRevision(doc: UploadResponse, revision: Revision): UploadResponse | null {
+  if (doc.file_type !== 'pptx') return null
+
+  const scope = revision.scope
+  const structure = cloneForUi(doc.structure as PptxStructure)
+  const slideIndex = scope.slide_index
+
+  if (slideIndex == null || slideIndex < 0 || slideIndex >= structure.slides.length) return null
+
+  const slide = structure.slides[slideIndex]
+  let changed = false
+
+  if (scope.type === 'shape' && scope.shape_indices?.length) {
+    for (const shapeIndex of scope.shape_indices) {
+      const shape = slide.shapes.find((candidate) => candidate.index === shapeIndex)
+      if (!shape || shape.shape_type === 'image' || shape.shape_type === 'decoration' || shape.shape_type === 'table') continue
+      shape.text = revision.revised
+      shape.paragraphs = buildOptimisticShapeParagraphs(shape, revision.revised)
+      changed = true
+    }
+  } else if (scope.type === 'table_cell' && scope.table_index != null && scope.row_index != null && scope.cell_index != null) {
+    const shape = slide.shapes.find((candidate) => candidate.index === scope.table_index)
+    const cell = shape?.table_data?.[scope.row_index]?.[scope.cell_index]
+    if (!cell) return null
+    cell.text = revision.revised
+    changed = true
+  }
+
+  if (!changed) return null
+
+  return {
+    ...doc,
+    structure,
+    slide_renderer_available: false,
+  }
+}
 
 function makeId(): string {
   if (globalThis.crypto?.randomUUID) {
@@ -283,9 +345,22 @@ export default function App() {
     // while the API call is in flight.
     const targetId = activeId
     const fileId   = doc.file_id
+    const previousDoc = doc
+    const optimisticDoc = applyOptimisticPptxRevision(doc, revision)
     setEditError(null)
     const queueKey = `${targetId}:${fileId}`
     const previous = directEditQueuesRef.current.get(queueKey) ?? Promise.resolve()
+
+    if (optimisticDoc) {
+      setWorkspaces((prev) =>
+        prev.map((w) =>
+          w.id === targetId && w.doc?.file_id === fileId
+            ? { ...w, doc: optimisticDoc, selectedIndices: [], selectedTable: null }
+            : w,
+        ),
+      )
+    }
+
     const next = previous
       .catch(() => {})
       .then(async () => {
@@ -304,6 +379,15 @@ export default function App() {
     try {
       await next
     } catch (e) {
+      if (optimisticDoc) {
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === targetId && w.doc?.file_id === fileId
+              ? { ...w, doc: previousDoc, selectedIndices: [], selectedTable: null }
+              : w,
+          ),
+        )
+      }
       setEditError(e instanceof Error ? e.message : msg('editFailed'))
     } finally {
       if (directEditQueuesRef.current.get(queueKey) === next) {

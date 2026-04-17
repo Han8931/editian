@@ -30,6 +30,8 @@ _PDFTOPPM_CANDIDATES = (
 
 _PDF_RENDER_DPI = 180
 _global_lock = threading.Lock()
+_pending_lock = threading.Lock()
+_pending_renders: set[str] = set()
 
 
 def _resolve_binary(candidates: tuple[Optional[str], ...]) -> Optional[str]:
@@ -228,3 +230,23 @@ def get_or_render(file_path: str, slide_idx: int, output_dir: Path) -> Optional[
 def invalidate(output_dir: Path) -> None:
     """Delete all cached PNGs so the next request triggers a fresh render."""
     shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def render_all_async(file_path: str, output_dir: Path) -> None:
+    """Start rendering *file_path* into *output_dir* in a background thread."""
+    key = str(output_dir.resolve())
+    with _pending_lock:
+        if key in _pending_renders:
+            return
+        _pending_renders.add(key)
+
+    def worker() -> None:
+        try:
+            render_all(file_path, output_dir)
+        except Exception:
+            logger.exception("background slide render crashed file=%s output_dir=%s", file_path, output_dir)
+        finally:
+            with _pending_lock:
+                _pending_renders.discard(key)
+
+    threading.Thread(target=worker, name="slide-render", daemon=True).start()

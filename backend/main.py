@@ -261,6 +261,20 @@ def _invalidate_slide_cache(file_id: str) -> None:
     slide_renderer.invalidate(_slide_cache_dir(file_id))
 
 
+def _warm_slide_cache(file_id: str) -> None:
+    info = _files.get(file_id)
+    if not info or info["type"] != "pptx" or not slide_renderer.backend_name():
+        return
+
+    file_path = _ensure_local_file(file_id)
+    try:
+        mtime_ns = str(int(Path(file_path).stat().st_mtime_ns))
+    except Exception:
+        mtime_ns = "0"
+
+    slide_renderer.render_all_async(file_path, _slide_cache_dir(file_id) / mtime_ns)
+
+
 # ---------- Routes ----------
 
 @app.middleware("http")
@@ -1221,7 +1235,10 @@ async def apply(req: ApplyRequest):
         file_type,
         len(rev_dicts),
     )
-    return _build_response(req.file_id)
+    response = _build_response(req.file_id)
+    if file_type == "pptx":
+        _warm_slide_cache(req.file_id)
+    return response
 
 
 @app.post("/api/undo/{file_id}")
@@ -1243,7 +1260,10 @@ async def undo(file_id: str):
     _invalidate_slide_cache(file_id)
     _save_registry()
     logger.info("undo completed file_id=%s file_type=%s", file_id, info["type"])
-    return _build_response(file_id)
+    response = _build_response(file_id)
+    if info["type"] == "pptx":
+        _warm_slide_cache(file_id)
+    return response
 
 
 @app.post("/api/redo/{file_id}")
@@ -1265,7 +1285,10 @@ async def redo(file_id: str):
     _invalidate_slide_cache(file_id)
     _save_registry()
     logger.info("redo completed file_id=%s file_type=%s", file_id, info["type"])
-    return _build_response(file_id)
+    response = _build_response(file_id)
+    if info["type"] == "pptx":
+        _warm_slide_cache(file_id)
+    return response
 
 
 @app.get("/api/download/{file_id}")
