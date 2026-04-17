@@ -204,6 +204,7 @@ class RevisionScope(BaseModel):
     paragraph_index: Optional[int] = None   # insert after this paragraph (-1 = end)
     rows: Optional[int] = None
     cols: Optional[int] = None
+    cells: Optional[list[list[str]]] = None
     # insert_text_box fields
     text_box_left: Optional[int] = None     # EMU
     text_box_top: Optional[int] = None      # EMU
@@ -396,6 +397,8 @@ _SYSTEM_PROMPT = (
     "— For DOCX or Markdown, to ADD a new paragraph/block: call insert_paragraph with the target paragraph index and text. "
     "  Use paragraph_index=-1 to append at the end. "
     "  When the user wants one new paragraph below a selected text passage, prefer insert_paragraph_after_selection. "
+    "— For DOCX, to ADD a table: call insert_table with paragraph_index, rows, cols, and cells. "
+    "  Do not represent DOCX tables with markdown pipe-table syntax. "
     "— For DOCX or Markdown, to DELETE an existing paragraph/block: call delete_paragraph with that paragraph index. "
     "— For DOCX or Markdown, to MERGE the selected paragraphs into one replacement paragraph: call merge_selected_paragraphs. "
     "— To ADD a new slide: call add_slide with a clear title and body. "
@@ -432,6 +435,61 @@ def _shape_prompt(all_shapes: list[dict], selected_indices: set[int]) -> str:
         tag = f"[shape={sh['index']}]" if sh["index"] in selected_indices else "[context]"
         lines.append(f"{tag} {sh['text']}")
     return "\n\n".join(lines)
+
+
+def _normalize_table_cells(cells: list[list[str]], rows: int | None = None, cols: int | None = None) -> list[list[str]]:
+    normalized = [[str(cell).strip() for cell in row] for row in cells if isinstance(row, list)]
+    if not normalized:
+        return []
+
+    target_rows = rows or len(normalized)
+    target_cols = cols or max((len(row) for row in normalized), default=0)
+    output: list[list[str]] = []
+    for row in normalized[:target_rows]:
+        padded = row[:target_cols] + [""] * max(0, target_cols - len(row))
+        output.append(padded)
+    while len(output) < target_rows:
+        output.append([""] * target_cols)
+    return output
+
+
+def _resolve_insert_table_anchor(
+    requested_index: int | None,
+    *,
+    default_index: int,
+    allowed_indices: set[int] | None = None,
+) -> int:
+    if requested_index is None:
+        return default_index
+    if allowed_indices is not None and requested_index not in allowed_indices:
+        return default_index
+    return requested_index
+
+
+def _parse_markdown_table(text: str) -> list[list[str]]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+
+    candidate_rows = [line for line in lines if "|" in line]
+    if len(candidate_rows) < 2:
+        return []
+
+    def split_row(line: str) -> list[str]:
+        parts = [part.strip() for part in line.strip().strip("|").split("|")]
+        return parts
+
+    separator = split_row(candidate_rows[1])
+    if not separator or not all(part and set(part) <= {"-", ":", " "} for part in separator):
+        return []
+
+    header = split_row(candidate_rows[0])
+    body = [split_row(line) for line in candidate_rows[2:]]
+    rows = [header] + body
+    col_count = max((len(row) for row in rows), default=0)
+    if col_count == 0:
+        return []
+    return _normalize_table_cells(rows, len(rows), col_count)
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -550,6 +608,34 @@ _MERGE_SELECTED_PARAGRAPHS_TOOL = _tool(
     ["revised_text"],
 )
 
+_INSERT_TABLE_TOOL = _tool(
+    "insert_table",
+    "Insert a DOCX table after the specified paragraph index. Use real cell values, not markdown table syntax.",
+    {
+        "paragraph_index": {
+            "type": "integer",
+            "description": "Insert the new table after this 0-based paragraph index. Use -1 to append at the end.",
+        },
+        "rows": {
+            "type": "integer",
+            "description": "Number of table rows.",
+        },
+        "cols": {
+            "type": "integer",
+            "description": "Number of table columns.",
+        },
+        "cells": {
+            "type": "array",
+            "description": "2D table cell content. Each inner array is one row. Do not use markdown pipe-table syntax.",
+            "items": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+    },
+    ["paragraph_index", "rows", "cols", "cells"],
+)
+
 _DELETE_PARAGRAPH_TOOL = _tool(
     "delete_paragraph",
     "Delete an existing paragraph by its 0-based paragraph index.",
@@ -625,6 +711,35 @@ async def _do_revise(req, file_type, file_path, llm):
             allow_markdown=file_type == "markdown",
         )
 
+    def append_insert_table_revision(
+        paragraph_index: int | None,
+        rows: int,
+        cols: int,
+        cells: list[list[str]],
+        *,
+        default_index: int = -1,
+        allowed_indices: set[int] | None = None,
+    ) -> None:
+        normalized = _normalize_table_cells(cells, rows, cols)
+        if not normalized:
+            return
+        anchor_index = _resolve_insert_table_anchor(
+            paragraph_index,
+            default_index=default_index,
+            allowed_indices=allowed_indices,
+        )
+        revisions.append({
+            "scope": {
+                "type": "insert_table",
+                "paragraph_index": anchor_index,
+                "rows": len(normalized),
+                "cols": len(normalized[0]) if normalized else 0,
+                "cells": normalized,
+            },
+            "original": "",
+            "revised": "",
+        })
+
     revisions = []
 
     if file_type in ("docx", "markdown"):
@@ -640,9 +755,14 @@ async def _do_revise(req, file_type, file_path, llm):
                 f"Instruction: {req.instruction}\n\n"
                 "If the instruction is to revise existing text, call revise_paragraph. "
                 "If it asks to add a new paragraph, call insert_paragraph. "
+                "If it asks to add a table in a DOCX document, call insert_table with rows, cols, and cells. "
+                "Do not use markdown pipe-table syntax for DOCX output. "
                 "If it asks to remove a paragraph, call delete_paragraph."
             )
-            calls = call_agent(prompt, [_REVISE_PARAGRAPH_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL])
+            tools = [_REVISE_PARAGRAPH_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL]
+            if file_type == "docx":
+                tools.append(_INSERT_TABLE_TOOL)
+            calls = call_agent(prompt, tools)
             para_map = {p["index"]: p for p in paragraphs}
             if not calls:
                 # Fallback: revise every non-empty paragraph individually
@@ -650,7 +770,15 @@ async def _do_revise(req, file_type, file_path, llm):
                     if not _p["text"].strip():
                         continue
                     _revised = text_fallback(_p["text"])
-                    if _revised and _revised.strip() != _p["text"].strip():
+                    table_cells = _parse_markdown_table(_revised) if file_type == "docx" else []
+                    if table_cells:
+                        calls.append(("insert_table", {
+                            "paragraph_index": _p["index"],
+                            "rows": len(table_cells),
+                            "cols": len(table_cells[0]),
+                            "cells": table_cells,
+                        }))
+                    elif _revised and _revised.strip() != _p["text"].strip():
                         calls.append(("revise_paragraph", {"index": _p["index"], "revised_text": _revised}))
             for name, args in calls:
                 if name == "revise_paragraph":
@@ -688,6 +816,13 @@ async def _do_revise(req, file_type, file_path, llm):
                             "original": para_map[idx]["text"],
                             "revised": "",
                         })
+                elif name == "insert_table" and file_type == "docx":
+                    append_insert_table_revision(
+                        args.get("paragraph_index", -1),
+                        args.get("rows"),
+                        args.get("cols"),
+                        args.get("cells", []),
+                    )
 
         elif req.scope.type == "paragraphs":
             selected_indices = set(req.scope.paragraph_indices or [])
@@ -701,12 +836,26 @@ async def _do_revise(req, file_type, file_path, llm):
                     f"Instruction: {req.instruction}\n\n"
                     "To change the selected paragraph text, call revise_text. "
                     "To remove the selected paragraph, call delete_paragraph with its numeric index. "
-                    "To add a new paragraph near it, call insert_paragraph after that numeric index."
+                    "To add a new paragraph near it, call insert_paragraph after that numeric index. "
+                    f"If this is a DOCX request to generate a table near the selected content, call insert_table using paragraph_index={idx} unless the user explicitly asks for another nearby insertion point. "
+                    "Provide rows, cols, and cells. "
+                    "Do not use markdown pipe-table syntax for DOCX output."
                 )
-                calls = call_agent(prompt, [_REVISE_TEXT_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL])
+                tools = [_REVISE_TEXT_TOOL, _INSERT_PARAGRAPH_TOOL, _DELETE_PARAGRAPH_TOOL]
+                if file_type == "docx":
+                    tools.append(_INSERT_TABLE_TOOL)
+                calls = call_agent(prompt, tools)
                 if not calls:
                     revised = text_fallback(para["text"])
-                    if revised:
+                    table_cells = _parse_markdown_table(revised) if file_type == "docx" else []
+                    if table_cells:
+                        calls = [("insert_table", {
+                            "paragraph_index": idx,
+                            "rows": len(table_cells),
+                            "cols": len(table_cells[0]),
+                            "cells": table_cells,
+                        })]
+                    elif revised:
                         calls = [("revise_text", {"revised_text": revised})]
                 for name, args in calls:
                     if name == "revise_text":
@@ -743,6 +892,15 @@ async def _do_revise(req, file_type, file_path, llm):
                                 "original": para["text"],
                                 "revised": "",
                             })
+                    elif name == "insert_table" and file_type == "docx":
+                        append_insert_table_revision(
+                            args.get("paragraph_index"),
+                            args.get("rows"),
+                            args.get("cols"),
+                            args.get("cells", []),
+                            default_index=idx,
+                            allowed_indices={idx},
+                        )
             else:
                 insert_after_index = max(selected_indices) if selected_indices else -1
                 ordered_indices = sorted(para_map)
@@ -754,20 +912,23 @@ async def _do_revise(req, file_type, file_path, llm):
                     "For revising multiple selected paragraphs, prefer a single revise_paragraphs_batch call with one revision item per numbered paragraph that should change. "
                     "If the user wants the selected paragraphs merged into one replacement paragraph, call merge_selected_paragraphs. "
                     f"If the user wants one combined output below the selection, call insert_paragraph_after_selection and it will be inserted after paragraph {insert_after_index}. "
+                    f"If this is a DOCX request to create a table from the selected content, call insert_table after one of the selected paragraph indices, preferably paragraph {insert_after_index}. "
+                    "Provide rows, cols, and cells. "
+                    "Do not use markdown pipe-table syntax for DOCX output. "
                     "Only delete paragraphs that have numeric labels, never [context]. "
                     "If adding text nearby, insert a new paragraph after one of the numbered paragraphs."
                 )
-                calls = call_agent(
-                    prompt,
-                    [
-                        _REVISE_PARAGRAPHS_BATCH_TOOL,
-                        _MERGE_SELECTED_PARAGRAPHS_TOOL,
-                        _REVISE_PARAGRAPH_TOOL,
-                        _INSERT_PARAGRAPH_AFTER_SELECTION_TOOL,
-                        _INSERT_PARAGRAPH_TOOL,
-                        _DELETE_PARAGRAPH_TOOL,
-                    ],
-                )
+                tools = [
+                    _REVISE_PARAGRAPHS_BATCH_TOOL,
+                    _MERGE_SELECTED_PARAGRAPHS_TOOL,
+                    _REVISE_PARAGRAPH_TOOL,
+                    _INSERT_PARAGRAPH_AFTER_SELECTION_TOOL,
+                    _INSERT_PARAGRAPH_TOOL,
+                    _DELETE_PARAGRAPH_TOOL,
+                ]
+                if file_type == "docx":
+                    tools.append(_INSERT_TABLE_TOOL)
+                calls = call_agent(prompt, tools)
                 if not calls:
                     _merge_kw = {"merge", "combine", "join", "concatenate", "fuse", "blend", "consolidate", "unify"}
                     if any(kw in req.instruction.lower() for kw in _merge_kw):
@@ -776,11 +937,21 @@ async def _do_revise(req, file_type, file_path, llm):
                         if revised and ordered_indices:
                             calls = [("merge_selected_paragraphs", {"revised_text": revised})]
                     else:
-                        # Revise intent: revise each selected paragraph individually
-                        for _idx in ordered_indices:
-                            _revised = text_fallback(para_map[_idx]["text"])
-                            if _revised:
-                                calls.append(("revise_paragraph", {"index": _idx, "revised_text": _revised}))
+                        fallback_text = text_fallback(selected_original)
+                        table_cells = _parse_markdown_table(fallback_text) if file_type == "docx" else []
+                        if table_cells:
+                            calls = [("insert_table", {
+                                "paragraph_index": insert_after_index,
+                                "rows": len(table_cells),
+                                "cols": len(table_cells[0]),
+                                "cells": table_cells,
+                            })]
+                        else:
+                            # Revise intent: revise each selected paragraph individually
+                            for _idx in ordered_indices:
+                                _revised = text_fallback(para_map[_idx]["text"])
+                                if _revised:
+                                    calls.append(("revise_paragraph", {"index": _idx, "revised_text": _revised}))
                 for name, args in calls:
                     if name == "revise_paragraphs_batch":
                         for item in args.get("revisions", []):
@@ -858,6 +1029,15 @@ async def _do_revise(req, file_type, file_path, llm):
                                 "original": para_map[idx]["text"],
                                 "revised": "",
                             })
+                    elif name == "insert_table" and file_type == "docx":
+                        append_insert_table_revision(
+                            args.get("paragraph_index"),
+                            args.get("rows"),
+                            args.get("cols"),
+                            args.get("cells", []),
+                            default_index=insert_after_index,
+                            allowed_indices=selected_indices,
+                        )
 
         elif req.scope.type == "table_cell" and file_type == "docx":
             table_index = req.scope.table_index or 0

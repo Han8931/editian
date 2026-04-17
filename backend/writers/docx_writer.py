@@ -120,7 +120,17 @@ def apply_docx_revisions(
             cols = scope.get("cols") or 2
             para_index = scope.get("paragraph_index", -1)
             current_anchor = _current_insertion_anchor(para_index)
-            _insert_table(doc, current_anchor, rows, cols)
+            table = _insert_table(doc, current_anchor, rows, cols)
+            table_cells = scope.get("cells") or []
+            for row_index, row in enumerate(table_cells):
+                if row_index >= len(table.rows):
+                    break
+                for cell_index, cell_text in enumerate(row):
+                    if cell_index >= len(table.rows[row_index].cells):
+                        break
+                    cell = table.rows[row_index].cells[cell_index]
+                    if cell.paragraphs:
+                        _set_paragraph_text(cell.paragraphs[0], str(cell_text))
 
         elif scope["type"] == "table_cell":
             table_index = scope.get("table_index", 0)
@@ -138,7 +148,7 @@ def apply_docx_revisions(
     doc.save(output_path)
 
 
-def _insert_table(doc: Any, para_index: int, rows: int, cols: int) -> None:
+def _insert_table(doc: Any, para_index: int, rows: int, cols: int) -> Any:
     """Insert a rows×cols table after the paragraph at para_index (-1 = end of document)."""
     # add_table appends to the body; we'll move it to the right position
     table = doc.add_table(rows=rows, cols=cols)
@@ -165,6 +175,7 @@ def _insert_table(doc: Any, para_index: int, rows: int, cols: int) -> None:
             body.insert(list(body).index(sect_pr), tbl)
         else:
             body.append(tbl)
+    return table
 
 
 def _insert_paragraph(doc: Any, para_index: int, text: str, font_name: str | None = None, font_size: float | None = None,

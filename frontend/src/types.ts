@@ -146,6 +146,7 @@ export interface RevisionScope {
   paragraph_index?: number   // insert after this paragraph (-1 = end of document)
   rows?: number
   cols?: number
+  cells?: string[][]
   // insert_text_box fields
   text_box_left?: number     // EMU
   text_box_top?: number      // EMU

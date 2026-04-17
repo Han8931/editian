@@ -363,6 +363,12 @@ function normalizeEditedText(fileType: UploadResponse['file_type'], value: strin
   return value.trim()
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.isContentEditable
+      || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+}
+
 function swallowPointerEvent(event: React.SyntheticEvent) {
   event.preventDefault()
   event.stopPropagation()
@@ -387,11 +393,14 @@ export default function DocumentPreview({
   const isManual = mode === 'manual'
   const isMarkdown = doc.file_type === 'markdown'
   const isTextDocument = doc.file_type === 'docx' || doc.file_type === 'markdown'
+  const textStructure = isTextDocument ? doc.structure as TextDocumentStructure : null
+  const paragraphs = textStructure?.paragraphs ?? []
 
   const isDragging = useRef(false)
   const anchorIdx = useRef<number | null>(null)
   const [editing, setEditing] = useState<EditingState>(null)
   const editTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const previewRootRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(100)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [currentPage, setCurrentPage] = useState(1)
@@ -409,6 +418,8 @@ export default function DocumentPreview({
   const [showTablePicker, setShowTablePicker] = useState(false)
   const [tablePickerPos, setTablePickerPos] = useState<{ top: number; left: number } | null>(null)
   const [hoverCell, setHoverCell] = useState<{ r: number; c: number } | null>(null)
+  const [copiedPreview, setCopiedPreview] = useState(false)
+  const copyResetTimerRef = useRef<number | null>(null)
 
   // ── Manual mode state ────────────────────────────────────────────────────
   // Tracks the currently-edited DOM element for inline DOCX editing
@@ -454,6 +465,67 @@ export default function DocumentPreview({
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [showFontSizeMenu, showTablePicker])
+
+  useEffect(() => {
+    function markPreviewCopied() {
+      setCopiedPreview(true)
+      if (copyResetTimerRef.current != null) {
+        window.clearTimeout(copyResetTimerRef.current)
+      }
+      copyResetTimerRef.current = window.setTimeout(() => {
+        setCopiedPreview(false)
+        copyResetTimerRef.current = null
+      }, 1500)
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (isManual || editing) return
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 'c') return
+      if (isEditableTarget(event.target)) return
+      const root = previewRootRef.current
+      if (!root) return
+      const active = document.activeElement
+      if (active !== root) return
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed && selection.toString().trim()) return
+      event.preventDefault()
+      event.stopPropagation()
+      void copyDisplayedContent()
+    }
+
+    function onCopy(event: ClipboardEvent) {
+      if (isManual || editing) return
+      const root = previewRootRef.current
+      if (!root) return
+      const active = document.activeElement
+      if (active !== root && !(active instanceof Node && root.contains(active))) return
+      if (isEditableTarget(active)) return
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed && selection.toString().trim()) return
+      const text = displayedContentText()
+      if (!text) return
+      if (event.clipboardData) {
+        event.preventDefault()
+        event.stopPropagation()
+        event.clipboardData.setData('text/plain', text)
+        markPreviewCopied()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('copy', onCopy, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('copy', onCopy, true)
+    }
+  }, [isManual, editing, doc, currentSlide, selectedIndices, selectedTable])
+
+  useEffect(() => () => {
+    if (copyResetTimerRef.current != null) {
+      window.clearTimeout(copyResetTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     setShowFontSizeMenu(false)
@@ -688,9 +760,114 @@ export default function DocumentPreview({
   function zoomIn() { setZoom((z) => Math.min(z + 10, 200)) }
   function zoomOut() { setZoom((z) => Math.max(z - 10, 50)) }
 
+  function copyDocxTableText(tableIndex: number): string {
+    const root = previewRootRef.current
+    if (!root) return ''
+
+    const cellMap = new Map<number, Map<number, string>>()
+    const cells = Array.from(root.querySelectorAll<HTMLElement>(`[data-cell-ref^="t${tableIndex}r"]`))
+
+    for (const cell of cells) {
+      const match = cell.getAttribute('data-cell-ref')?.match(/t\d+r(\d+)c(\d+)/)
+      if (!match) continue
+      const rowIndex = Number(match[1])
+      const cellIndex = Number(match[2])
+      const text = cell.innerText.trim()
+      if (!cellMap.has(rowIndex)) cellMap.set(rowIndex, new Map())
+      cellMap.get(rowIndex)!.set(cellIndex, text)
+    }
+
+    return Array.from(cellMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([, row]) => (
+        Array.from(row.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([, text]) => text)
+          .join('\t')
+      ))
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  function allDisplayedContentText(): string {
+    if (doc.file_type === 'pptx') {
+      return (slides[currentSlide]?.shapes ?? [])
+        .map((shape) => {
+          if (shape.shape_type === 'table' && shape.table_data) {
+            return shape.table_data
+              .map((row) => row.map((cell) => cell.text.trim()).join('\t'))
+              .filter(Boolean)
+              .join('\n')
+          }
+          return shape.text.trim()
+        })
+        .filter(Boolean)
+        .join('\n\n')
+    }
+
+    return paragraphs
+      .map((paragraph) => paragraph.text.trim())
+      .filter(Boolean)
+      .join('\n\n')
+  }
+
+  function selectedDisplayedContentText(): string {
+    if (doc.file_type === 'pptx') {
+      if (selectedTable != null) {
+        const table = slides[currentSlide]?.shapes.find((shape) => shape.index === selectedTable && shape.shape_type === 'table')
+        return table?.table_data
+          ?.map((row) => row.map((cell) => cell.text.trim()).join('\t'))
+          .filter(Boolean)
+          .join('\n') ?? ''
+      }
+
+      if (selectedIndices.length > 0) {
+        const selected = new Set(selectedIndices)
+        return (slides[currentSlide]?.shapes ?? [])
+          .filter((shape) => selected.has(shape.index))
+          .map((shape) => shape.text.trim())
+          .filter(Boolean)
+          .join('\n\n')
+      }
+
+      return ''
+    }
+
+    if (selectedTable != null && doc.file_type === 'docx') {
+      return copyDocxTableText(selectedTable)
+    }
+
+    if (selectedIndices.length > 0) {
+      const selected = new Set(selectedIndices)
+      return paragraphs
+        .filter((paragraph) => selected.has(paragraph.index))
+        .map((paragraph) => paragraph.text.trim())
+        .filter(Boolean)
+        .join('\n\n')
+    }
+
+    return ''
+  }
+
+  function displayedContentText(): string {
+    return selectedDisplayedContentText() || allDisplayedContentText()
+  }
+
   function ZoomControls() {
+    const canCopyPreview = !!displayedContentText()
+
     return (
       <div className="absolute top-4 right-4 z-10 flex items-center gap-1 bg-white border border-gray-200 rounded-lg shadow-sm px-1 py-0.5">
+        <button
+          type="button"
+          onClick={copyDisplayedContent}
+          disabled={!canCopyPreview}
+          className="h-7 inline-flex items-center justify-center gap-1 rounded px-2 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title={`${msg('copyDisplayedContent')} (⌘C)`}
+        >
+          <Copy size={13} />
+          <span>{copiedPreview ? msg('copied') : msg('copy')}</span>
+        </button>
         <button
           onClick={zoomOut}
           disabled={zoom <= 50}
@@ -758,6 +935,25 @@ export default function DocumentPreview({
       revised: '',
     })
     onSlideChange(currentSlide + 1)
+  }
+
+  async function copyDisplayedContent() {
+    const text = displayedContentText()
+    if (!text) return
+
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedPreview(true)
+      if (copyResetTimerRef.current != null) {
+        window.clearTimeout(copyResetTimerRef.current)
+      }
+      copyResetTimerRef.current = window.setTimeout(() => {
+        setCopiedPreview(false)
+        copyResetTimerRef.current = null
+      }, 1500)
+    } catch {
+      setCopiedPreview(false)
+    }
   }
 
   function insertTable(rows: number, cols: number) {
@@ -1375,7 +1571,6 @@ export default function DocumentPreview({
 
   // ── DOCX ────────────────────────────────────────────────────────────────
   if (isTextDocument) {
-    const { paragraphs } = doc.structure as TextDocumentStructure
     const paragraphMap = new Map(paragraphs.map((p) => [p.index, p]))
     const structureIndices = new Set(paragraphs.map((p) => p.index))
     const previewClass = doc.file_type === 'markdown' ? 'markdown-preview' : 'docx-preview'
@@ -1407,8 +1602,16 @@ export default function DocumentPreview({
         <div className="flex-1 relative overflow-hidden">
           <ZoomControls />
           <div
-            ref={scrollContainerRef}
+            ref={(node) => {
+              ;(previewRootRef as React.MutableRefObject<HTMLDivElement | null>).current = node
+              ;(scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = node
+            }}
+            tabIndex={isManual ? -1 : 0}
             className={`h-full overflow-auto p-8 ${isManual ? '' : 'select-none'}`}
+            onMouseDownCapture={isManual ? undefined : (e) => {
+              if (e.button !== 0) return
+              previewRootRef.current?.focus()
+            }}
             onMouseDown={(e) => {
               if (isManual) {
                 if (isMarkdown) {
@@ -1562,7 +1765,13 @@ export default function DocumentPreview({
       {ManualToolbar()}
       {/* Slide canvas area */}
       <div
+        ref={previewRootRef}
         className="flex-1 flex items-center justify-center p-6 overflow-auto relative"
+        tabIndex={isManual ? -1 : 0}
+        onMouseDownCapture={isManual ? undefined : (e) => {
+          if (e.button !== 0) return
+          previewRootRef.current?.focus()
+        }}
         onMouseUp={stopDrag}
         onMouseLeave={stopDrag}
       >
