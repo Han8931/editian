@@ -177,3 +177,7 @@ def get_request_id() -> str:
 
 def reset_request_id(token: contextvars.Token[str]) -> None:
     _request_id.reset(token)
+
+
+def clear_request_id() -> None:
+    _request_id.set("-")

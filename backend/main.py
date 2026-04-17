@@ -22,8 +22,8 @@ from parsers.pptx_parser import parse_pptx, get_pptx_cell_text, get_pptx_table_c
 from writers.docx_writer import apply_docx_revisions
 from writers.markdown_writer import apply_markdown_revisions
 from writers.pptx_writer import apply_pptx_revisions
-from llm import run_agent_loop, run_chat, run_text_revision, stream_chat
-from logging_config import get_request_id, reset_request_id, set_request_id, setup_logging
+from llm import probe_model, run_agent_loop, run_chat, run_text_revision, stream_chat
+from logging_config import clear_request_id, get_request_id, reset_request_id, set_request_id, setup_logging
 from storage import S3DocumentStorage, StorageConfigError
 import slide_renderer
 
@@ -1389,10 +1389,30 @@ class ChatRequest(BaseModel):
     preferred_language: Optional[str] = None
 
 
+class CompareChatRequest(BaseModel):
+    file_a_id: str
+    file_b_id: str
+    messages: list[ChatMessage]
+    llm: LLMConfig
+    preferred_language: Optional[str] = None
+
+
+class TestLlmRequest(BaseModel):
+    llm: LLMConfig
+
+
 _CHAT_SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions about the document provided below. "
     "Answer clearly and concisely. You may quote relevant passages when helpful. "
     "Do not make up content that is not in the document."
+)
+
+_COMPARE_CHAT_SYSTEM_PROMPT = (
+    "You are a helpful assistant that compares two documents. "
+    "Document A is the reference or earlier document. Document B is the compared or updated document. "
+    "Answer clearly and concisely, grounding every answer in the provided documents. "
+    "Call out similarities, differences, missing material, and factual changes when relevant. "
+    "Do not make up content that is not in the documents."
 )
 
 
@@ -1404,6 +1424,20 @@ def _chat_language_instruction(code: Optional[str]) -> str:
     if code == "en":
         return "Respond in English unless the user explicitly asks for another language."
     return ""
+
+
+def _llm_connection_hint(llm: LLMConfig) -> Optional[str]:
+    if llm.provider != "ollama":
+        return None
+
+    target = (llm.base_url or "http://localhost:11434/v1").lower()
+    if "localhost" not in target and "127.0.0.1" not in target:
+        return None
+
+    return (
+        "If Editian is running in Docker and Ollama is running on your host machine, "
+        "use http://host.docker.internal:11434/v1 instead of localhost."
+    )
 
 
 def _extract_selected_text(
@@ -1458,26 +1492,73 @@ def _extract_selected_text(
     return None
 
 
+def _document_text(file_id: str, file_type: str, file_path: str) -> str:
+    if file_type in ("docx", "markdown"):
+        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
+        return "\n\n".join(
+            p["text"] for p in structure["paragraphs"] if p["text"].strip()
+        )
+
+    structure = parse_pptx(file_path, _pptx_asset_resolver(file_id))
+    lines = []
+    for slide in structure["slides"]:
+        slide_texts = [sh["text"] for sh in slide["shapes"] if sh["text"].strip()]
+        if slide_texts:
+            lines.append(f"[Slide {slide['index'] + 1}]\n" + "\n".join(slide_texts))
+    return "\n\n".join(lines)
+
+
+@app.post("/api/llm/test")
+async def test_llm_connection(req: TestLlmRequest):
+    llm = req.llm
+    logger.info(
+        "llm connection test started provider=%s model=%s",
+        llm.provider,
+        llm.model,
+    )
+    try:
+        result = probe_model(
+            llm.provider,
+            llm.model,
+            llm.base_url,
+            llm.api_key,
+            llm.timeout,
+        )
+        logger.info(
+            "llm connection test succeeded provider=%s model=%s base_url=%s",
+            result["provider"],
+            result["model"],
+            result["base_url"] or "-",
+        )
+        return {"ok": True, **result}
+    except TimeoutError as exc:
+        logger.warning(
+            "llm connection test timed out provider=%s model=%s timeout=%s",
+            llm.provider,
+            llm.model,
+            llm.timeout,
+        )
+        raise HTTPException(504, str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "llm connection test failed provider=%s model=%s",
+            llm.provider,
+            llm.model,
+        )
+        detail = str(exc) or "Connection failed."
+        hint = _llm_connection_hint(llm)
+        if hint:
+            detail = f"{detail} {hint}"
+        raise HTTPException(502, detail) from exc
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     info = _get_file(req.file_id)
     file_type = info["type"]
     file_path = _ensure_local_file(req.file_id)
 
-    # Extract full document text as context
-    if file_type in ("docx", "markdown"):
-        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
-        doc_text = "\n\n".join(
-            p["text"] for p in structure["paragraphs"] if p["text"].strip()
-        )
-    else:
-        structure = parse_pptx(file_path, _pptx_asset_resolver(req.file_id))
-        lines = []
-        for slide in structure["slides"]:
-            slide_texts = [sh["text"] for sh in slide["shapes"] if sh["text"].strip()]
-            if slide_texts:
-                lines.append(f"[Slide {slide['index'] + 1}]\n" + "\n".join(slide_texts))
-        doc_text = "\n\n".join(lines)
+    doc_text = _document_text(req.file_id, file_type, file_path)
 
     # Build system prompt — append selected passage when a scope is provided
     system_prompt = f"{_CHAT_SYSTEM_PROMPT}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
@@ -1507,7 +1588,7 @@ async def chat(req: ChatRequest):
     )
 
     def generate():
-        token = set_request_id(request_id)
+        set_request_id(request_id)
         try:
             for chunk in stream_chat(
                 system_prompt,
@@ -1537,7 +1618,81 @@ async def chat(req: ChatRequest):
             )
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
-            reset_request_id(token)
+            clear_request_id()
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/compare/chat")
+async def compare_chat(req: CompareChatRequest):
+    info_a = _get_file(req.file_a_id)
+    info_b = _get_file(req.file_b_id)
+    file_path_a = _ensure_local_file(req.file_a_id)
+    file_path_b = _ensure_local_file(req.file_b_id)
+
+    doc_text_a = _document_text(req.file_a_id, info_a["type"], file_path_a)
+    doc_text_b = _document_text(req.file_b_id, info_b["type"], file_path_b)
+
+    system_prompt = (
+        f"{_COMPARE_CHAT_SYSTEM_PROMPT}\n\n"
+        f"Document A ({info_a['name']}, type={info_a['type']}):\n\"\"\"\n{doc_text_a}\n\"\"\"\n\n"
+        f"Document B ({info_b['name']}, type={info_b['type']}):\n\"\"\"\n{doc_text_b}\n\"\"\""
+    )
+    language_instruction = _chat_language_instruction(req.preferred_language)
+    if language_instruction:
+        system_prompt = f"{system_prompt}\n\n{language_instruction}"
+
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+    llm = req.llm
+    request_id = get_request_id()
+    logger.info(
+        "compare chat started file_a_id=%s file_b_id=%s types=%s/%s messages=%d provider=%s model=%s preferred_language=%s",
+        req.file_a_id,
+        req.file_b_id,
+        info_a["type"],
+        info_b["type"],
+        len(messages),
+        llm.provider,
+        llm.model,
+        req.preferred_language or "default",
+    )
+
+    def generate():
+        set_request_id(request_id)
+        try:
+            for chunk in stream_chat(
+                system_prompt,
+                messages,
+                llm.provider,
+                llm.model,
+                llm.base_url,
+                llm.api_key,
+                llm.timeout,
+            ):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except TimeoutError as e:
+            logger.warning(
+                "compare chat timed out file_a_id=%s file_b_id=%s provider=%s model=%s timeout=%s",
+                req.file_a_id,
+                req.file_b_id,
+                llm.provider,
+                llm.model,
+                llm.timeout,
+            )
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            logger.exception(
+                "compare chat failed file_a_id=%s file_b_id=%s provider=%s model=%s",
+                req.file_a_id,
+                req.file_b_id,
+                llm.provider,
+                llm.model,
+            )
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            clear_request_id()
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",

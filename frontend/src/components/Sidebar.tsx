@@ -15,6 +15,7 @@ interface Props {
   onDocumentUpdate: (doc: UploadResponse) => void
   selectedIndices: number[]
   selectedTable?: number | null
+  view?: 'full' | 'chat'
   style?: CSSProperties
 }
 
@@ -40,12 +41,14 @@ export default function Sidebar({
   onDocumentUpdate,
   selectedIndices,
   selectedTable,
+  view = 'full',
   style,
 }: Props) {
   const { language, setLanguage, msg } = useI18n()
   const [showSettings, setShowSettings] = useState(false)
   const [llm, setLlm] = useState<LLMConfig>(loadSavedLLM)
-  const [activeTab, setActiveTab] = useState<'edit' | 'chat'>('edit')
+  const chatOnly = view === 'chat'
+  const [activeTab, setActiveTab] = useState<'edit' | 'chat'>(chatOnly ? 'chat' : 'edit')
 
   // Edit tab state
   const [instruction, setInstruction] = useState('')
@@ -87,6 +90,12 @@ export default function Sidebar({
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages, chatLoading])
+
+  useEffect(() => {
+    if (chatOnly && activeTab !== 'chat') {
+      setActiveTab('chat')
+    }
+  }, [chatOnly, activeTab, doc.file_id])
 
   useEffect(() => () => {
     if (copyResetTimerRef.current != null) {
@@ -298,20 +307,22 @@ export default function Sidebar({
           <span className="font-semibold text-sm text-gray-800">{msg('aiPanel')}</span>
 
           {/* Edit | Chat tab toggle */}
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 ml-2">
-            {(['edit', 'chat'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {tab === 'edit' ? <PenLine size={11} /> : <MessageSquare size={11} />}
-                {tab === 'edit' ? msg('editTab') : msg('chatTab')}
-              </button>
-            ))}
-          </div>
+          {!chatOnly && (
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5 ml-2">
+              {(['edit', 'chat'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {tab === 'edit' ? <PenLine size={11} /> : <MessageSquare size={11} />}
+                  {tab === 'edit' ? msg('editTab') : msg('chatTab')}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-gray-600 transition-colors" title={msg('settings')}>

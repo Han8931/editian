@@ -6,6 +6,16 @@ export interface LLMConfig {
   timeout: number  // seconds
 }
 
+export interface LLMConnectionResult {
+  ok: boolean
+  provider: string
+  model: string
+  base_url?: string
+  response_preview?: string
+}
+
+export type AppMode = 'ai' | 'manual' | 'compare'
+
 export type LanguageCode = 'en' | 'zh' | 'ko'
 
 export type ParagraphAlign = 'left' | 'center' | 'right' | 'justify'
@@ -99,6 +109,13 @@ export interface UploadResponse {
   slide_render_version?: string
   slide_renderer_available?: boolean
   slide_render_backend?: string | null
+}
+
+export type CompareSlotSource = 'workspace' | 'upload'
+
+export interface CompareSlot {
+  doc: UploadResponse
+  source: CompareSlotSource
 }
 
 export interface Directory {

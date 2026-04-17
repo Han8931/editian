@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import type { LLMConfig, LanguageCode } from '../types'
+import { useEffect, useState } from 'react'
+import { Loader2 } from 'lucide-react'
+import { testLlmConnection } from '../api/client'
+import type { LLMConfig, LanguageCode, LLMConnectionResult } from '../types'
 import { useI18n } from '../i18n'
 
 interface Props {
@@ -36,9 +38,17 @@ export default function Settings({ llm, language, onChange, onLanguageChange }: 
   const { msg } = useI18n()
   const [draft, setDraft] = useState<LLMConfig>(llm)
   const [draftLanguage, setDraftLanguage] = useState<LanguageCode>(language)
+  const [testLoading, setTestLoading] = useState(false)
+  const [testResult, setTestResult] = useState<LLMConnectionResult | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
   const set = (patch: Partial<LLMConfig>) => setDraft((prev) => ({ ...prev, ...patch }))
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(llm) || draftLanguage !== language
+
+  useEffect(() => {
+    setTestResult(null)
+    setTestError(null)
+  }, [draft, draftLanguage])
 
   function handleSave() {
     onChange(draft)
@@ -46,6 +56,20 @@ export default function Settings({ llm, language, onChange, onLanguageChange }: 
     try {
       localStorage.setItem('editian_llm', JSON.stringify(draft))
     } catch {}
+  }
+
+  async function handleTestConnection() {
+    setTestLoading(true)
+    setTestResult(null)
+    setTestError(null)
+    try {
+      const result = await testLlmConnection(draft)
+      setTestResult(result)
+    } catch (e) {
+      setTestError(e instanceof Error ? e.message : msg('connectionFailed'))
+    } finally {
+      setTestLoading(false)
+    }
   }
 
   return (
@@ -154,13 +178,44 @@ export default function Settings({ llm, language, onChange, onLanguageChange }: 
         <p className="text-xs text-gray-400 mt-1">{msg('timeoutHelp')}</p>
       </div>
 
-      <button
-        onClick={handleSave}
-        disabled={!isDirty}
-        className="w-full py-2.5 bg-blue-500 text-white rounded-lg font-medium text-sm hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
-        {isDirty ? msg('saveSettings') : msg('saved')}
-      </button>
+      {(testResult || testError) && (
+        <div className={`rounded-lg px-3 py-2 text-sm ${testError ? 'border border-red-200 bg-red-50 text-red-700' : 'border border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+          {testError ? (
+            <p>{testError}</p>
+          ) : (
+            <p>
+              {msg('connectedToModel', {
+                provider: testResult?.provider ?? draft.provider,
+                model: testResult?.model ?? draft.model,
+              })}
+            </p>
+          )}
+          {!testError && testResult?.base_url && (
+            <p className="mt-1 text-xs opacity-80">
+              {msg('baseUrl')}: {testResult.base_url}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleTestConnection}
+          disabled={testLoading}
+          className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {testLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+          {testLoading ? msg('testingConnection') : msg('testConnection')}
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={!isDirty}
+          className="flex-1 py-2.5 bg-blue-500 text-white rounded-lg font-medium text-sm hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {isDirty ? msg('saveSettings') : msg('saved')}
+        </button>
+      </div>
     </div>
   )
 }

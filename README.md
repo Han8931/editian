@@ -84,6 +84,8 @@ Notes:
 - The container includes LibreOffice and Poppler, so PPTX rendering uses the higher-fidelity slide image path
 - If you want S3-backed storage, add the relevant environment variables in `compose.yml`
 - LLM provider settings are still configured inside the app UI
+- If you use Ollama on your host machine while Editian runs in Docker, set the app's Ollama Base URL to `http://host.docker.internal:11434/v1`
+- The LLM settings panel includes a `Test connection` button so you can verify the provider/model before using chat or revise
 - If `EDITIAN_FRONTEND_PORT` is not set, Docker Compose uses `3000`
 - If `EDITIAN_BACKEND_PORT` is not set, Docker Compose uses `8000`
 - The browser should use the frontend port; nginx proxies `/api` to the backend container automatically
@@ -317,3 +319,7 @@ LOG_BACKUP_COUNT=30
 
 ### Todos
 - Admin page
+- PPTX rendering speed issue
+- docx table gen issue
+- Fold workspace pane
+

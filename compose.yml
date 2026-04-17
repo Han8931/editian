@@ -28,6 +28,8 @@ services:
       LOG_ROTATION_INTERVAL: ${EDITIAN_LOG_ROTATION_INTERVAL:-1}
       LOG_BACKUP_COUNT: ${EDITIAN_LOG_BACKUP_COUNT:-14}
       LOG_ROTATION_UTC: ${EDITIAN_LOG_ROTATION_UTC:-false}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - editian_data:/root/.editian
     restart: unless-stopped

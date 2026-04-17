@@ -3,9 +3,10 @@ import FileUpload from './components/FileUpload'
 import DocumentPreview from './components/DocumentPreview'
 import Sidebar from './components/Sidebar'
 import ModePanel from './components/ModePanel'
+import CompareMode from './components/CompareMode'
 import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
-import type { UploadResponse, Revision, Workspace, Directory } from './types'
+import type { AppMode, CompareSlot, UploadResponse, Revision, Workspace, Directory } from './types'
 import editianLogo from '../../assets/editian_icon.svg'
 import { useI18n } from './i18n'
 
@@ -21,7 +22,7 @@ const LS_WORKSPACES  = 'editian_workspaces'
 const LS_DIRECTORIES = 'editian_directories'
 const LS_ACTIVE      = 'editian_active_workspace'
 const LS_WS_WIDTH    = 'editian_workspace_width'
-const LS_MODE        = 'editian_mode'
+const LS_APP_MODE    = 'editian_app_mode'
 
 // Stored shape: minimal — no doc (too large for localStorage)
 interface StoredWorkspace { id: string; name: string; fileId: string | null; parentId?: string; directoryId?: string }
@@ -115,11 +116,20 @@ export default function App() {
   useEffect(() => { localStorage.setItem(LS_WS_WIDTH, String(workspaceWidth)) }, [workspaceWidth])
 
   // ── Mode ───────────────────────────────────────────────────────────────
-  const [mode, setMode] = useState<'ai' | 'manual'>(() => {
-    const saved = localStorage.getItem(LS_MODE)
-    return saved === 'manual' ? 'manual' : 'ai'
+  const [appMode, setAppMode] = useState<AppMode>(() => {
+    const savedAppMode = localStorage.getItem(LS_APP_MODE)
+    const savedEditMode = localStorage.getItem('editian_edit_mode')
+
+    if (savedAppMode === 'compare') return 'compare'
+    if (savedAppMode === 'manual') return 'manual'
+    if (savedAppMode === 'ai') return 'ai'
+    if (savedAppMode === 'edit' && savedEditMode === 'manual') return 'manual'
+    return 'ai'
   })
-  useEffect(() => { localStorage.setItem(LS_MODE, mode) }, [mode])
+  useEffect(() => { localStorage.setItem(LS_APP_MODE, appMode) }, [appMode])
+
+  const [compareA, setCompareA] = useState<CompareSlot | null>(null)
+  const [compareB, setCompareB] = useState<CompareSlot | null>(null)
 
   // ── UI state ───────────────────────────────────────────────────────────
   const [showDownload, setShowDownload] = useState(false)
@@ -137,8 +147,44 @@ export default function App() {
   const active = workspaces.find((w) => w.id === activeId) ?? workspaces[0]
   const doc    = active.doc
 
+  useEffect(() => {
+    const syncSlot = (slot: CompareSlot | null): CompareSlot | null => {
+      if (!slot || slot.source !== 'workspace') return slot
+      const matching = workspaces.find((workspace) => workspace.doc?.file_id === slot.doc.file_id)?.doc ?? null
+      return matching ? { ...slot, doc: matching } : null
+    }
+    setCompareA((prev) => syncSlot(prev))
+    setCompareB((prev) => syncSlot(prev))
+  }, [workspaces])
+
   function patchActive(patch: Partial<Workspace>) {
     setWorkspaces((prev) => prev.map((w) => w.id === activeId ? { ...w, ...patch } : w))
+  }
+
+  async function cleanupCompareSlot(slot: CompareSlot | null) {
+    if (slot?.source === 'upload') {
+      await deleteFile(slot.doc.file_id).catch(() => {})
+    }
+  }
+
+  async function assignCompareSlot(side: 'a' | 'b', slot: CompareSlot) {
+    const current = side === 'a' ? compareA : compareB
+    if (current && current.doc.file_id === slot.doc.file_id && current.source === slot.source) return
+    await cleanupCompareSlot(current)
+    if (side === 'a') setCompareA(slot)
+    else setCompareB(slot)
+  }
+
+  async function clearCompareSlot(side: 'a' | 'b') {
+    const current = side === 'a' ? compareA : compareB
+    await cleanupCompareSlot(current)
+    if (side === 'a') setCompareA(null)
+    else setCompareB(null)
+  }
+
+  function swapCompareSlots() {
+    setCompareA(compareB)
+    setCompareB(compareA)
   }
 
   // ── Workspace management ───────────────────────────────────────────────
@@ -340,6 +386,7 @@ export default function App() {
       const key = e.key.toLowerCase()
       if (e.key === 'Escape') { setShowDownload(false); return }
       if (isEditableTarget(e.target)) return
+      if (appMode === 'compare') return
       if ((e.metaKey || e.ctrlKey) && key === 'z' && !e.shiftKey && doc) {
         e.preventDefault()
         e.stopPropagation()
@@ -353,11 +400,11 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [doc, activeId])
+  }, [doc, activeId, appMode])
 
   useEffect(() => {
     function onBeforeInput(e: InputEvent) {
-      if (!doc) return
+      if (!doc || appMode === 'compare') return
       if (isEditableTarget(e.target)) return
       if (e.inputType === 'historyUndo') {
         e.preventDefault()
@@ -372,7 +419,7 @@ export default function App() {
 
     document.addEventListener('beforeinput', onBeforeInput, true)
     return () => document.removeEventListener('beforeinput', onBeforeInput, true)
-  }, [doc, activeId])
+  }, [doc, activeId, appMode])
 
   useEffect(() => {
     if (showDownload && downloadInputRef.current) {
@@ -394,14 +441,41 @@ export default function App() {
           <img src={editianLogo} alt="Editian logo" className="h-6 w-6 flex-shrink-0" />
           <span className="font-semibold text-gray-800 text-sm">{msg('appName')}</span>
         </div>
-        {doc && (
+        {appMode !== 'compare' && doc && (
           <>
             <span className="text-gray-300">|</span>
             <span className="text-sm text-gray-500 truncate max-w-xs">{doc.name}</span>
           </>
         )}
+        {appMode === 'compare' && (compareA || compareB) && (
+          <>
+            <span className="text-gray-300">|</span>
+            <span className="text-sm text-gray-500 truncate max-w-xs">
+              {compareA?.doc.name ?? msg('documentA')} {msg('versusLabel')} {compareB?.doc.name ?? msg('documentB')}
+            </span>
+          </>
+        )}
         <div className="ml-auto flex items-center gap-3">
-          {doc && mode === 'ai' && (
+          <div className="flex items-center bg-blue-50 rounded-lg p-0.5 border border-blue-100">
+            {(['ai', 'manual', 'compare'] as const).map((nextMode) => (
+              <button
+                key={nextMode}
+                onClick={() => setAppMode(nextMode)}
+                className={`px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+                  appMode === nextMode
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'text-blue-700 hover:text-blue-800'
+                }`}
+              >
+                {nextMode === 'ai'
+                  ? msg('ai')
+                  : nextMode === 'manual'
+                  ? msg('manual')
+                  : msg('compareModeLabel')}
+              </button>
+            ))}
+          </div>
+          {doc && appMode !== 'compare' && (
             <>
               <div className="flex items-center gap-1">
                 <button
@@ -434,25 +508,8 @@ export default function App() {
               <div className="w-px h-4 bg-gray-200" />
             </>
           )}
-          {doc && (
-            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
-              {(['ai', 'manual'] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                    mode === m
-                      ? 'bg-white text-gray-800 shadow-sm'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {m === 'ai' ? msg('ai') : msg('manual')}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="w-px h-4 bg-gray-200" />
-          {doc && (
+          {doc && appMode !== 'compare' && <div className="w-px h-4 bg-gray-200" />}
+          {doc && appMode !== 'compare' && (
             <div className="relative">
               <button onClick={openDownload} className="text-sm text-blue-500 hover:text-blue-700 font-medium transition-colors">{msg('download')}</button>
               {showDownload && (
@@ -473,7 +530,7 @@ export default function App() {
               )}
             </div>
           )}
-          {doc && <button onClick={handleCloseDoc} className="text-sm text-gray-400 hover:text-gray-600 transition-colors">{msg('close')}</button>}
+          {doc && appMode !== 'compare' && <button onClick={handleCloseDoc} className="text-sm text-gray-400 hover:text-gray-600 transition-colors">{msg('close')}</button>}
         </div>
       </header>
 
@@ -521,7 +578,16 @@ export default function App() {
         />
 
         {/* Main content */}
-        {!doc ? (
+        {appMode === 'compare' ? (
+          <CompareMode
+            currentDoc={doc}
+            slotA={compareA}
+            slotB={compareB}
+            onAssignSlot={assignCompareSlot}
+            onClearSlot={clearCompareSlot}
+            onSwapSlots={swapCompareSlots}
+          />
+        ) : !doc ? (
           <div className="flex-1 flex items-center justify-center bg-gray-50">
             <FileUpload onUpload={handleUpload} />
           </div>
@@ -529,7 +595,7 @@ export default function App() {
           <>
             <DocumentPreview
               doc={doc}
-              mode={mode}
+              mode={appMode === 'manual' ? 'manual' : 'ai'}
               currentSlide={active.currentSlide}
               onSlideChange={(i) => patchActive({ currentSlide: i, selectedIndices: [], selectedTable: null })}
               selectedIndices={active.selectedIndices}
@@ -553,7 +619,7 @@ export default function App() {
               }}
             />
 
-            {mode === 'manual' ? (
+            {appMode === 'manual' ? (
               <ModePanel
                 doc={doc}
                 style={{ width: sidebarWidth, minWidth: sidebarWidth }}
@@ -566,6 +632,7 @@ export default function App() {
                 onDocumentUpdate={handleDocumentUpdate}
                 selectedIndices={active.selectedIndices}
                 selectedTable={active.selectedTable}
+                view="full"
                 style={{ width: sidebarWidth, minWidth: sidebarWidth }}
               />
             )}

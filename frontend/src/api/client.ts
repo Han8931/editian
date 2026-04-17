@@ -1,4 +1,4 @@
-import type { LLMConfig, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage, LanguageCode } from '../types'
+import type { LLMConfig, LLMConnectionResult, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage, LanguageCode } from '../types'
 
 // In production use a reverse proxy that routes /api → backend.
 // In development Vite proxies /api → localhost:8000 (see vite.config.ts).
@@ -165,6 +165,81 @@ export async function chatWithDocument(params: {
       }
     }
   }
+}
+
+export async function chatWithComparison(params: {
+  file_a_id: string
+  file_b_id: string
+  messages: ChatMessage[]
+  llm: LLMConfig
+  preferred_language?: LanguageCode
+  onChunk: (chunk: string) => void
+  signal?: AbortSignal
+}): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/compare/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_a_id: params.file_a_id,
+      file_b_id: params.file_b_id,
+      messages: params.messages,
+      llm: {
+        provider: params.llm.provider,
+        base_url: params.llm.baseUrl,
+        api_key: params.llm.apiKey,
+        model: params.llm.model,
+        timeout: params.llm.timeout,
+      },
+      preferred_language: params.preferred_language,
+    }),
+    signal: params.signal,
+  })
+  if (!res.ok) throw await apiError(res)
+
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const payload = line.slice(6)
+      if (payload === '[DONE]') return
+      try {
+        const parsed = JSON.parse(payload)
+        if (typeof parsed === 'string') {
+          params.onChunk(parsed)
+        } else if (parsed && typeof parsed.error === 'string') {
+          throw new Error(parsed.error)
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message !== payload) throw e
+      }
+    }
+  }
+}
+
+export async function testLlmConnection(llm: LLMConfig): Promise<LLMConnectionResult> {
+  const res = await fetch(`${BASE_URL}/api/llm/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      llm: {
+        provider: llm.provider,
+        base_url: llm.baseUrl,
+        api_key: llm.apiKey,
+        model: llm.model,
+        timeout: llm.timeout,
+      },
+    }),
+  })
+  if (!res.ok) throw await apiError(res)
+  return res.json()
 }
 
 export async function deleteFile(fileId: string): Promise<void> {

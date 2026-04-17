@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import re
 import logging
+import os
 from typing import Annotated, Generator, Optional
+from urllib.parse import urlparse, urlunparse
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
@@ -40,9 +42,10 @@ def _get_model(
 ) -> ChatOpenAI:
     """Return a LangChain ChatOpenAI instance for any OpenAI-compatible provider."""
     if provider == "ollama":
+        effective_base_url = _resolve_base_url(provider, base_url)
         return ChatOpenAI(
             model=model,
-            base_url=base_url or "http://localhost:11434/v1",
+            base_url=effective_base_url,
             api_key="ollama",
             timeout=timeout,
         )
@@ -55,6 +58,38 @@ def _get_model(
         api_key=api_key or "none",
         timeout=timeout,
     )
+
+
+def _resolve_base_url(provider: str, base_url: Optional[str]) -> Optional[str]:
+    if provider != "ollama":
+        return base_url
+
+    target = base_url or "http://localhost:11434/v1"
+    if not os.path.exists("/.dockerenv"):
+        return target
+
+    parsed = urlparse(target)
+    if parsed.hostname not in {"localhost", "127.0.0.1"}:
+        return target
+
+    netloc = "host.docker.internal"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def _stringify_content(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content or "")
 
 
 def _to_lc_messages(messages: list[dict]) -> list[BaseMessage]:
@@ -338,3 +373,30 @@ def run_chat(
 ) -> str:
     """Non-streaming chat — returns the full reply as a string."""
     return "".join(stream_chat(system_prompt, messages, provider, model, base_url, api_key, timeout))
+
+
+def probe_model(
+    provider: str,
+    model: str,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 30,
+) -> dict[str, str]:
+    effective_base_url = _resolve_base_url(provider, base_url)
+    lm = _get_model(provider, model, base_url, api_key, timeout)
+    try:
+        response = lm.invoke([HumanMessage("Reply with exactly OK.")])
+    except Exception as exc:
+        if provider == "ollama":
+            raise ConnectionError(
+                f"Could not reach Ollama at {effective_base_url or 'http://localhost:11434/v1'}."
+            ) from exc
+        raise
+
+    content = _stringify_content(response.content).strip()
+    return {
+        "provider": provider,
+        "model": model,
+        "base_url": effective_base_url or "",
+        "response_preview": content[:200],
+    }
