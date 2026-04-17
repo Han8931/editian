@@ -10,6 +10,16 @@
 
 Editian is a browser-based editor for `.docx`, `.pptx`, and markdown files. Upload a document, describe what you want in plain language, review the before/after diff, and accept only the changes you want.
 
+## License
+
+Editian is distributed under the `PolyForm Noncommercial 1.0.0` license.
+
+- Noncommercial use, modification, and redistribution are allowed under that license.
+- Commercial use is not allowed without separate permission from the copyright holder.
+
+See [LICENSE](LICENSE) for the full license text.
+See [COMMERCIAL.md](COMMERCIAL.md) for commercial licensing inquiries.
+
 ## Why Use It?
 
 - Works with **Word, PowerPoint, and Markdown files**
