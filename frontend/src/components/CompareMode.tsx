@@ -17,6 +17,11 @@ interface Props {
   style?: CSSProperties
 }
 
+const COMPARE_CHAT_MIN = 280
+const COMPARE_CHAT_MAX = 520
+const COMPARE_CHAT_DEFAULT = 352
+const LS_COMPARE_CHAT_WIDTH = 'editian_compare_chat_width'
+
 const DEFAULT_LLM: LLMConfig = {
   provider: 'ollama',
   baseUrl: 'http://localhost:11434/v1',
@@ -279,6 +284,10 @@ export default function CompareMode({
 }: Props) {
   const { language, setLanguage, msg } = useI18n()
   const [llm, setLlm] = useState<LLMConfig>(loadSavedLLM)
+  const [chatPaneWidth, setChatPaneWidth] = useState(() => {
+    const saved = parseInt(localStorage.getItem(LS_COMPARE_CHAT_WIDTH) ?? '', 10)
+    return isNaN(saved) ? COMPARE_CHAT_DEFAULT : saved
+  })
   const [showSettings, setShowSettings] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -286,7 +295,9 @@ export default function CompareMode({
   const [chatError, setChatError] = useState<string | null>(null)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const layoutRef = useRef<HTMLDivElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
+  const isDraggingChatRef = useRef(false)
   const stickToBottomRef = useRef(true)
   const copyResetTimerRef = useRef<number | null>(null)
 
@@ -310,10 +321,37 @@ export default function CompareMode({
   }, [])
 
   useEffect(() => {
+    localStorage.setItem(LS_COMPARE_CHAT_WIDTH, String(chatPaneWidth))
+  }, [chatPaneWidth])
+
+  useEffect(() => {
     setMessages([])
     setChatError(null)
     stickToBottomRef.current = true
   }, [slotA?.doc.file_id, slotB?.doc.file_id])
+
+  useEffect(() => {
+    function onMouseMove(event: MouseEvent) {
+      if (!isDraggingChatRef.current || !layoutRef.current) return
+      const rect = layoutRef.current.getBoundingClientRect()
+      const nextWidth = rect.right - event.clientX
+      setChatPaneWidth(Math.min(COMPARE_CHAT_MAX, Math.max(COMPARE_CHAT_MIN, nextWidth)))
+    }
+
+    function onMouseUp() {
+      if (!isDraggingChatRef.current) return
+      isDraggingChatRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
 
   function handleChatScroll(event: UIEvent<HTMLDivElement>) {
     const node = event.currentTarget
@@ -481,9 +519,13 @@ export default function CompareMode({
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-6">
-              <div className="grid gap-6 lg:grid-cols-2">
-                <div className="h-[32rem] lg:h-[calc(100vh-26rem)] min-h-[26rem]">
+            <div
+              ref={layoutRef}
+              className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_8px_var(--compare-chat-width)] xl:items-start"
+              style={{ '--compare-chat-width': `${chatPaneWidth}px` } as CSSProperties}
+            >
+              <div className="grid gap-6 lg:grid-cols-2 min-w-0">
+                <div className="h-[32rem] lg:h-[calc(100vh-16rem)] min-h-[26rem]">
                   <CompareDocumentPane
                     label={msg('documentA')}
                     currentDoc={currentDoc}
@@ -493,7 +535,7 @@ export default function CompareMode({
                     onClear={() => onClearSlot('a')}
                   />
                 </div>
-                <div className="h-[32rem] lg:h-[calc(100vh-26rem)] min-h-[26rem]">
+                <div className="h-[32rem] lg:h-[calc(100vh-16rem)] min-h-[26rem]">
                   <CompareDocumentPane
                     label={msg('documentB')}
                     currentDoc={currentDoc}
@@ -505,7 +547,16 @@ export default function CompareMode({
                 </div>
               </div>
 
-              <section className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm flex flex-col h-[24rem] lg:h-[26rem]">
+              <div
+                className="hidden xl:block w-2 cursor-col-resize rounded-full bg-gray-200 hover:bg-blue-400 active:bg-blue-500 transition-colors"
+                onMouseDown={() => {
+                  isDraggingChatRef.current = true
+                  document.body.style.cursor = 'col-resize'
+                  document.body.style.userSelect = 'none'
+                }}
+              />
+
+              <section className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm flex flex-col h-[26rem] xl:h-[calc(100vh-16rem)] min-h-[26rem]">
                 <div
                   ref={chatScrollRef}
                   onScroll={handleChatScroll}

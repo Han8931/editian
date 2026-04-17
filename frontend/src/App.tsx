@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import FileUpload from './components/FileUpload'
 import DocumentPreview from './components/DocumentPreview'
 import Sidebar from './components/Sidebar'
@@ -22,6 +23,7 @@ const LS_WORKSPACES  = 'editian_workspaces'
 const LS_DIRECTORIES = 'editian_directories'
 const LS_ACTIVE      = 'editian_active_workspace'
 const LS_WS_WIDTH    = 'editian_workspace_width'
+const LS_WS_COLLAPSED = 'editian_workspace_collapsed'
 const LS_APP_MODE    = 'editian_app_mode'
 
 // Stored shape: minimal — no doc (too large for localStorage)
@@ -111,9 +113,11 @@ export default function App() {
     const saved = parseInt(localStorage.getItem(LS_WS_WIDTH) ?? '', 10)
     return isNaN(saved) ? WORKSPACE_DEFAULT : saved
   })
+  const [workspaceCollapsed, setWorkspaceCollapsed] = useState(() => localStorage.getItem(LS_WS_COLLAPSED) === 'true')
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
 
   useEffect(() => { localStorage.setItem(LS_WS_WIDTH, String(workspaceWidth)) }, [workspaceWidth])
+  useEffect(() => { localStorage.setItem(LS_WS_COLLAPSED, String(workspaceCollapsed)) }, [workspaceCollapsed])
 
   // ── Mode ───────────────────────────────────────────────────────────────
   const [appMode, setAppMode] = useState<AppMode>(() => {
@@ -364,13 +368,13 @@ export default function App() {
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
-    if (isDraggingWorkspace.current) {
+    if (isDraggingWorkspace.current && !workspaceCollapsed) {
       setWorkspaceWidth(Math.min(WORKSPACE_MAX, Math.max(WORKSPACE_MIN, e.clientX - rect.left)))
     }
     if (isDraggingSidebar.current) {
       setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, rect.right - e.clientX)))
     }
-  }, [])
+  }, [workspaceCollapsed])
 
   const handleMouseUp = useCallback(() => {
     isDraggingWorkspace.current = false
@@ -550,32 +554,57 @@ export default function App() {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
-        {/* Workspace panel */}
-        <WorkspacePanel
-          workspaces={workspaces}
-          directories={directories}
-          activeId={activeId}
-          onSelect={handleSwitchWorkspace}
-          onCreate={handleCreateWorkspace}
-          onDelete={handleDeleteWorkspace}
-          onRename={handleRenameWorkspace}
-          onBranch={handleBranchWorkspace}
-          onCreateDirectory={handleCreateDirectory}
-          onDeleteDirectory={handleDeleteDirectory}
-          onRenameDirectory={handleRenameDirectory}
-          onMoveWorkspace={handleMoveWorkspace}
-          style={{ width: workspaceWidth, minWidth: workspaceWidth }}
-        />
+        {workspaceCollapsed ? (
+          <div className="w-6 flex-shrink-0 bg-gray-100 border-r border-gray-200 relative">
+            <button
+              type="button"
+              onClick={() => setWorkspaceCollapsed(false)}
+              className="absolute bottom-3 right-1 w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 shadow-sm transition-colors"
+              title={msg('expandWorkspacePanel')}
+              aria-label={msg('expandWorkspacePanel')}
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="relative flex-shrink-0" style={{ width: workspaceWidth, minWidth: workspaceWidth }}>
+              <WorkspacePanel
+                workspaces={workspaces}
+                directories={directories}
+                activeId={activeId}
+                onSelect={handleSwitchWorkspace}
+                onCreate={handleCreateWorkspace}
+                onDelete={handleDeleteWorkspace}
+                onRename={handleRenameWorkspace}
+                onBranch={handleBranchWorkspace}
+                onCreateDirectory={handleCreateDirectory}
+                onDeleteDirectory={handleDeleteDirectory}
+                onRenameDirectory={handleRenameDirectory}
+                onMoveWorkspace={handleMoveWorkspace}
+                style={{ width: workspaceWidth, minWidth: workspaceWidth }}
+              />
+              <button
+                type="button"
+                onClick={() => setWorkspaceCollapsed(true)}
+                className="absolute bottom-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 shadow-sm transition-colors"
+                title={msg('collapseWorkspacePanel')}
+                aria-label={msg('collapseWorkspacePanel')}
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </div>
 
-        {/* Workspace panel resize handle */}
-        <div
-          className="w-1 flex-shrink-0 bg-gray-700 hover:bg-blue-500 active:bg-blue-600 cursor-col-resize transition-colors"
-          onMouseDown={() => {
-            isDraggingWorkspace.current = true
-            document.body.style.cursor     = 'col-resize'
-            document.body.style.userSelect = 'none'
-          }}
-        />
+            <div
+              className="w-1 flex-shrink-0 bg-gray-700 hover:bg-blue-500 active:bg-blue-600 cursor-col-resize transition-colors"
+              onMouseDown={() => {
+                isDraggingWorkspace.current = true
+                document.body.style.cursor     = 'col-resize'
+                document.body.style.userSelect = 'none'
+              }}
+            />
+          </>
+        )}
 
         {/* Main content */}
         {appMode === 'compare' ? (

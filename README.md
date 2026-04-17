@@ -321,5 +321,3 @@ LOG_BACKUP_COUNT=30
 - Admin page
 - PPTX rendering speed issue
 - docx table gen issue
-- Fold workspace pane
-

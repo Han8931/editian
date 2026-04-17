@@ -15,6 +15,8 @@ const STORAGE_KEY = 'editian_language'
 const MESSAGES: Record<LanguageCode, TranslationMap> = {
   en: {
     appName: 'Editian',
+    collapseWorkspacePanel: 'Collapse workspace panel',
+    expandWorkspacePanel: 'Expand workspace panel',
     settings: 'Settings',
     llmSettings: 'LLM Settings',
     saveSettings: 'Save settings',
@@ -260,6 +262,8 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
   },
   zh: {
     appName: 'Editian',
+    collapseWorkspacePanel: '折叠工作区面板',
+    expandWorkspacePanel: '展开工作区面板',
     settings: '设置',
     llmSettings: 'LLM 设置',
     saveSettings: '保存设置',
@@ -505,6 +509,8 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
   },
   ko: {
     appName: 'Editian',
+    collapseWorkspacePanel: '작업공간 패널 접기',
+    expandWorkspacePanel: '작업공간 패널 펼치기',
     settings: '설정',
     llmSettings: 'LLM 설정',
     saveSettings: '설정 저장',
