@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
-import { Maximize2, Minimize2, RefreshCcw, ZoomIn, ZoomOut } from 'lucide-react'
+import { Download, Maximize2, Minimize2, RefreshCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import type { CompareEntitiesResponse, EntityDiffStatus, SingleDocGraphData } from '../types'
 
 interface GraphNode {
@@ -311,6 +311,15 @@ export default function GraphView({ data, onNodeClick }: Props) {
   function zoomOut() { graphRef.current?.zoom(0.65, 300) }
   function fitView() { graphRef.current?.zoomToFit(400, 48) }
 
+  function exportPng() {
+    const canvas = containerRef.current?.querySelector('canvas')
+    if (!canvas) return
+    const link = document.createElement('a')
+    link.download = 'knowledge-graph.png'
+    link.href = canvas.toDataURL('image/png')
+    link.click()
+  }
+
   return (
     <div className={`relative flex flex-col border border-[#2a2d3e] bg-[#1a1b26] overflow-hidden shadow-2xl ${expanded ? 'fixed inset-4 z-50 rounded-2xl' : 'h-full rounded-2xl'}`}>
 
@@ -328,6 +337,9 @@ export default function GraphView({ data, onNodeClick }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0 ml-2">
+          <button onClick={exportPng} className="p-1.5 rounded-lg text-[#565f89] hover:text-[#c0caf5] hover:bg-[#292e42] transition-colors" title="Export as PNG">
+            <Download size={13} />
+          </button>
           <button onClick={zoomOut} className="p-1.5 rounded-lg text-[#565f89] hover:text-[#c0caf5] hover:bg-[#292e42] transition-colors" title="Zoom out (−)">
             <ZoomOut size={13} />
           </button>
