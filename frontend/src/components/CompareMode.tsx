@@ -1,11 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type UIEvent } from 'react'
-import { ArrowLeftRight, Check, Copy, FileText, Loader2, MessageSquare, RefreshCcw, Settings2, Trash2, UploadCloud } from 'lucide-react'
+import { ArrowLeftRight, Check, Copy, FileText, GitCompare, Loader2, MessageSquare, Network, RefreshCcw, Settings2, Trash2, UploadCloud } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { uploadFile, chatWithComparison } from '../api/client'
 import Settings from './Settings'
+import EntityDiffPanel from './EntityDiffPanel'
+import GraphView from './GraphView'
 import { useI18n } from '../i18n'
-import type { ChatMessage, CompareSlot, LLMConfig, PptxStructure, TextDocumentStructure, UploadResponse } from '../types'
+import type { ChatMessage, CompareEntitiesResponse, CompareSlot, EntityDiffItem, LLMConfig, PptxStructure, TextDocumentStructure, UploadResponse } from '../types'
 
 interface Props {
   currentDoc: UploadResponse | null
@@ -284,6 +286,9 @@ export default function CompareMode({
 }: Props) {
   const { language, setLanguage, msg } = useI18n()
   const [llm, setLlm] = useState<LLMConfig>(loadSavedLLM)
+  const [view, setView] = useState<'documents' | 'entity-diff' | 'graph'>('documents')
+  const [entityDiff, setEntityDiff] = useState<EntityDiffItem[] | null>(null)
+  const [graphData, setGraphData] = useState<CompareEntitiesResponse | null>(null)
   const [chatPaneWidth, setChatPaneWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem(LS_COMPARE_CHAT_WIDTH) ?? '', 10)
     return isNaN(saved) ? COMPARE_CHAT_DEFAULT : saved
@@ -327,6 +332,8 @@ export default function CompareMode({
   useEffect(() => {
     setMessages([])
     setChatError(null)
+    setEntityDiff(null)
+    setGraphData(null)
     stickToBottomRef.current = true
   }, [slotA?.doc.file_id, slotB?.doc.file_id])
 
@@ -375,6 +382,7 @@ export default function CompareMode({
         messages: nextMessages,
         llm,
         preferred_language: language,
+        entity_diff: entityDiff ?? undefined,
         onChunk: (chunk) => {
           setMessages((prev) => {
             const updated = [...prev]
@@ -408,6 +416,7 @@ export default function CompareMode({
         messages: baseMessages,
         llm,
         preferred_language: language,
+        entity_diff: entityDiff ?? undefined,
         onChunk: (chunk) => {
           setMessages((prev) => {
             const updated = [...prev]
@@ -524,27 +533,106 @@ export default function CompareMode({
               className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_8px_var(--compare-chat-width)] xl:items-start"
               style={{ '--compare-chat-width': `${chatPaneWidth}px` } as CSSProperties}
             >
-              <div className="grid gap-6 lg:grid-cols-2 min-w-0">
-                <div className="h-[32rem] lg:h-[calc(100vh-16rem)] min-h-[26rem]">
-                  <CompareDocumentPane
-                    label={msg('documentA')}
-                    currentDoc={currentDoc}
-                    slot={slotA}
-                    onUploaded={(doc: UploadResponse) => onAssignSlot('a', { doc, source: 'upload' })}
-                    onUseCurrent={() => currentDoc ? onAssignSlot('a', { doc: currentDoc, source: 'workspace' }) : undefined}
-                    onClear={() => onClearSlot('a')}
-                  />
+              <div className="flex flex-col gap-4 min-w-0">
+                <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-white p-1 shadow-sm self-start">
+                  <button
+                    type="button"
+                    onClick={() => setView('documents')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      view === 'documents'
+                        ? 'bg-gray-900 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <FileText size={14} />
+                    {msg('documentsTab')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView('entity-diff')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      view === 'entity-diff'
+                        ? 'bg-indigo-500 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <GitCompare size={14} />
+                    {msg('entityDiffTab')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView('graph')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                      view === 'graph'
+                        ? 'bg-[#7aa2f7] text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Network size={14} />
+                    {msg('graphTab')}
+                    {graphData && (
+                      <span className="ml-0.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold">
+                        {graphData.entities_a.length + graphData.entities_b.length}
+                      </span>
+                    )}
+                  </button>
                 </div>
-                <div className="h-[32rem] lg:h-[calc(100vh-16rem)] min-h-[26rem]">
-                  <CompareDocumentPane
-                    label={msg('documentB')}
-                    currentDoc={currentDoc}
-                    slot={slotB}
-                    onUploaded={(doc: UploadResponse) => onAssignSlot('b', { doc, source: 'upload' })}
-                    onUseCurrent={() => currentDoc ? onAssignSlot('b', { doc: currentDoc, source: 'workspace' }) : undefined}
-                    onClear={() => onClearSlot('b')}
-                  />
-                </div>
+
+                {view === 'graph' ? (
+                  <div className="h-[32rem] lg:h-[calc(100vh-18rem)] min-h-[26rem]">
+                    {graphData ? (
+                      <GraphView data={graphData} />
+                    ) : (
+                      <div className="h-full rounded-2xl border border-gray-700 bg-[#1a1b26] flex flex-col items-center justify-center text-center px-8 gap-4">
+                        <Network size={28} className="text-[#565f89]" />
+                        <p className="text-sm text-[#565f89]">{msg('graphEmptyHint')}</p>
+                        <button
+                          type="button"
+                          onClick={() => setView('entity-diff')}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-[#7aa2f7] px-4 py-2 text-sm font-medium text-white hover:bg-[#6a92e7] transition-colors"
+                        >
+                          <GitCompare size={14} />
+                          {msg('entityDiffExtract')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : view === 'entity-diff' ? (
+                  <div className="h-[32rem] lg:h-[calc(100vh-18rem)] min-h-[26rem]">
+                    <EntityDiffPanel
+                      slotA={slotA!}
+                      slotB={slotB!}
+                      llm={llm}
+                      onExtracted={(diff, fullData) => {
+                        setEntityDiff(diff)
+                        setGraphData(fullData)
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="grid gap-6 lg:grid-cols-2">
+                    <div className="h-[32rem] lg:h-[calc(100vh-18rem)] min-h-[26rem]">
+                      <CompareDocumentPane
+                        label={msg('documentA')}
+                        currentDoc={currentDoc}
+                        slot={slotA}
+                        onUploaded={(doc: UploadResponse) => onAssignSlot('a', { doc, source: 'upload' })}
+                        onUseCurrent={() => currentDoc ? onAssignSlot('a', { doc: currentDoc, source: 'workspace' }) : undefined}
+                        onClear={() => onClearSlot('a')}
+                      />
+                    </div>
+                    <div className="h-[32rem] lg:h-[calc(100vh-18rem)] min-h-[26rem]">
+                      <CompareDocumentPane
+                        label={msg('documentB')}
+                        currentDoc={currentDoc}
+                        slot={slotB}
+                        onUploaded={(doc: UploadResponse) => onAssignSlot('b', { doc, source: 'upload' })}
+                        onUseCurrent={() => currentDoc ? onAssignSlot('b', { doc: currentDoc, source: 'workspace' }) : undefined}
+                        onClear={() => onClearSlot('b')}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div
@@ -677,8 +765,20 @@ export default function CompareMode({
                       {chatLoading ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
                     </button>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {prompts.map((prompt) => (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {entityDiff && entityDiff.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-600"
+                        title={msg('entityGraphBadgeTitle')}
+                      >
+                        <GitCompare size={10} />
+                        {msg('entityGraphBadge')}
+                      </span>
+                    )}
+                    {(entityDiff && entityDiff.length > 0
+                      ? msg<string[]>('entityGraphPrompts')
+                      : prompts
+                    ).map((prompt) => (
                       <button
                         key={prompt}
                         type="button"

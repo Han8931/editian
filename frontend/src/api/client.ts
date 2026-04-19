@@ -1,4 +1,4 @@
-import type { LLMConfig, LLMConnectionResult, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage, LanguageCode } from '../types'
+import type { LLMConfig, LLMConnectionResult, Revision, RevisionScope, ReviseResponse, UploadResponse, ChatMessage, LanguageCode, CompareEntitiesResponse, EntityDiffItem, SingleDocGraphData } from '../types'
 
 // In production use a reverse proxy that routes /api → backend.
 // In development Vite proxies /api → localhost:8000 (see vite.config.ts).
@@ -173,6 +173,7 @@ export async function chatWithComparison(params: {
   messages: ChatMessage[]
   llm: LLMConfig
   preferred_language?: LanguageCode
+  entity_diff?: EntityDiffItem[]
   onChunk: (chunk: string) => void
   signal?: AbortSignal
 }): Promise<void> {
@@ -191,6 +192,7 @@ export async function chatWithComparison(params: {
         timeout: params.llm.timeout,
       },
       preferred_language: params.preferred_language,
+      entity_diff: params.entity_diff ?? null,
     }),
     signal: params.signal,
   })
@@ -244,4 +246,50 @@ export async function testLlmConnection(llm: LLMConfig): Promise<LLMConnectionRe
 
 export async function deleteFile(fileId: string): Promise<void> {
   await fetch(`${BASE_URL}/api/files/${fileId}`, { method: 'DELETE' })
+}
+
+export async function extractDocumentGraph(params: {
+  file_id: string
+  llm: LLMConfig
+}): Promise<SingleDocGraphData> {
+  const res = await fetch(`${BASE_URL}/api/graph`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_id: params.file_id,
+      llm: {
+        provider: params.llm.provider,
+        base_url: params.llm.baseUrl,
+        api_key: params.llm.apiKey,
+        model: params.llm.model,
+        timeout: params.llm.timeout,
+      },
+    }),
+  })
+  if (!res.ok) throw await apiError(res)
+  return res.json()
+}
+
+export async function extractCompareEntities(params: {
+  file_a_id: string
+  file_b_id: string
+  llm: LLMConfig
+}): Promise<CompareEntitiesResponse> {
+  const res = await fetch(`${BASE_URL}/api/compare/entities`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_a_id: params.file_a_id,
+      file_b_id: params.file_b_id,
+      llm: {
+        provider: params.llm.provider,
+        base_url: params.llm.baseUrl,
+        api_key: params.llm.apiKey,
+        model: params.llm.model,
+        timeout: params.llm.timeout,
+      },
+    }),
+  })
+  if (!res.ok) throw await apiError(res)
+  return res.json()
 }

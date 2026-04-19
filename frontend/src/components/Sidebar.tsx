@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
-import { Settings2, ArrowLeft, Sparkles, MousePointer, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check, RotateCcw } from 'lucide-react'
+import { Settings2, ArrowLeft, Sparkles, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check, RotateCcw, Network, AlertCircle, MousePointer } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage } from '../types'
-import { reviseDocument, applyRevisions, chatWithDocument } from '../api/client'
+import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage, SingleDocGraphData } from '../types'
+import { reviseDocument, applyRevisions, chatWithDocument, extractDocumentGraph } from '../api/client'
 import DiffViewer from './DiffViewer'
 import Settings from './Settings'
+import GraphView from './GraphView'
 import { useI18n } from '../i18n'
 
 interface Props {
@@ -48,7 +49,12 @@ export default function Sidebar({
   const [showSettings, setShowSettings] = useState(false)
   const [llm, setLlm] = useState<LLMConfig>(loadSavedLLM)
   const chatOnly = view === 'chat'
-  const [activeTab, setActiveTab] = useState<'edit' | 'chat'>(chatOnly ? 'chat' : 'edit')
+  const [activeTab, setActiveTab] = useState<'edit' | 'chat' | 'graph'>(chatOnly ? 'chat' : 'edit')
+
+  // Graph tab state
+  const [graphData, setGraphData] = useState<SingleDocGraphData | null>(null)
+  const [graphLoading, setGraphLoading] = useState(false)
+  const [graphError, setGraphError] = useState<string | null>(null)
 
   // Edit tab state
   const [instruction, setInstruction] = useState('')
@@ -96,6 +102,11 @@ export default function Sidebar({
       setActiveTab('chat')
     }
   }, [chatOnly, activeTab, doc.file_id])
+
+  useEffect(() => {
+    setGraphData(null)
+    setGraphError(null)
+  }, [doc.file_id])
 
   useEffect(() => () => {
     if (copyResetTimerRef.current != null) {
@@ -248,6 +259,19 @@ export default function Sidebar({
     }
   }
 
+  async function handleExtractGraph() {
+    setGraphLoading(true)
+    setGraphError(null)
+    try {
+      const result = await extractDocumentGraph({ file_id: doc.file_id, llm })
+      setGraphData(result)
+    } catch (e) {
+      setGraphError(e instanceof Error ? e.message : msg('entityDiffError'))
+    } finally {
+      setGraphLoading(false)
+    }
+  }
+
   function useAsInstruction(content: string) {
     setInstruction(content)
     setActiveTab('edit')
@@ -306,19 +330,19 @@ export default function Sidebar({
           </div>
           <span className="font-semibold text-sm text-gray-800">{msg('aiPanel')}</span>
 
-          {/* Edit | Chat tab toggle */}
+          {/* Edit | Chat | Graph tab toggle */}
           {!chatOnly && (
             <div className="flex items-center bg-gray-100 rounded-lg p-0.5 ml-2">
-              {(['edit', 'chat'] as const).map((tab) => (
+              {(['edit', 'chat', 'graph'] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
                     activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {tab === 'edit' ? <PenLine size={11} /> : <MessageSquare size={11} />}
-                  {tab === 'edit' ? msg('editTab') : msg('chatTab')}
+                  {tab === 'edit' ? <PenLine size={11} /> : tab === 'chat' ? <MessageSquare size={11} /> : <Network size={11} />}
+                  {tab === 'edit' ? msg('editTab') : tab === 'chat' ? msg('chatTab') : msg('graphTab')}
                 </button>
               ))}
             </div>
@@ -604,6 +628,49 @@ export default function Sidebar({
             </button>
           </div>
 
+        </div>
+      )}
+
+      {/* ── Graph tab ────────────────────────────────────────────────────── */}
+      {activeTab === 'graph' && (
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          {graphLoading ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-[#1a1b26] gap-3">
+              <Loader2 size={24} className="animate-spin text-[#7aa2f7]" />
+              <p className="text-sm text-[#565f89]">{msg('entityDiffExtracting')}</p>
+            </div>
+          ) : graphData ? (
+            <div className="flex-1 min-h-0 relative">
+              <GraphView data={graphData} />
+              <button
+                onClick={() => void handleExtractGraph()}
+                className="absolute top-2 right-2 z-20 inline-flex items-center gap-1 rounded-lg border border-[#3b4261] bg-[#24283b] px-2 py-1 text-[11px] text-[#7aa2f7] hover:bg-[#292e42] transition-colors"
+              >
+                <RotateCcw size={10} />
+                {msg('entityDiffReExtract')}
+              </button>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center bg-[#1a1b26] text-center px-6 gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-[#1f2335] flex items-center justify-center">
+                <Network size={22} className="text-[#7aa2f7]" />
+              </div>
+              <p className="text-sm text-[#565f89] leading-relaxed">{msg('graphEmptyHint')}</p>
+              <button
+                onClick={() => void handleExtractGraph()}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#7aa2f7] px-4 py-2 text-sm font-medium text-white hover:bg-[#6a92e7] transition-colors"
+              >
+                <Network size={14} />
+                {msg('entityDiffExtract')}
+              </button>
+              {graphError && (
+                <div className="flex items-center gap-2 rounded-lg border border-red-800/50 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+                  <AlertCircle size={13} />
+                  {graphError}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

@@ -182,3 +182,41 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
 }
+
+export interface KnowledgeEntity {
+  name: string
+  type: string
+  value: string
+  para_indices: number[]
+}
+
+export type EntityDiffStatus = 'changed' | 'added' | 'removed' | 'unchanged'
+
+export interface EntityDiffItem {
+  name: string
+  type: string
+  value_a: string | null
+  value_b: string | null
+  para_indices_a: number[]
+  para_indices_b: number[]
+  status: EntityDiffStatus
+}
+
+export interface GraphRelationship {
+  source: string
+  target: string
+  label: string
+}
+
+export interface SingleDocGraphData {
+  entities: KnowledgeEntity[]
+  relationships: GraphRelationship[]
+}
+
+export interface CompareEntitiesResponse {
+  entities_a: KnowledgeEntity[]
+  entities_b: KnowledgeEntity[]
+  relationships_a: GraphRelationship[]
+  relationships_b: GraphRelationship[]
+  diff: EntityDiffItem[]
+}

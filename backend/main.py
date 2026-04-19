@@ -1598,6 +1598,18 @@ class CompareChatRequest(BaseModel):
     messages: list[ChatMessage]
     llm: LLMConfig
     preferred_language: Optional[str] = None
+    entity_diff: Optional[list[dict]] = None
+
+
+class CompareEntitiesRequest(BaseModel):
+    file_a_id: str
+    file_b_id: str
+    llm: LLMConfig
+
+
+class GraphRequest(BaseModel):
+    file_id: str
+    llm: LLMConfig
 
 
 class TestLlmRequest(BaseModel):
@@ -1617,6 +1629,31 @@ _COMPARE_CHAT_SYSTEM_PROMPT = (
     "Call out similarities, differences, missing material, and factual changes when relevant. "
     "Do not make up content that is not in the documents."
 )
+
+
+def _format_entity_diff_context(entity_diff: list[dict]) -> str:
+    """Format entity diff list as a structured context block for the LLM."""
+    if not entity_diff:
+        return ""
+    lines = [
+        "Entity-level comparison (pre-extracted by AI analysis):",
+        "Use this graph to give precise, entity-grounded answers. "
+        "Reference entities by name and cite paragraph numbers (¶N) when possible.",
+        "",
+        f"{'Entity':<22} {'Type':<14} {'Doc A':<22} {'Doc B':<22} {'Status'}",
+        "-" * 90,
+    ]
+    for e in entity_diff:
+        val_a = str(e.get("value_a") or "—")[:20]
+        val_b = str(e.get("value_b") or "—")[:20]
+        paras_a = ", ".join(f"¶{i}" for i in (e.get("para_indices_a") or [])[:3])
+        paras_b = ", ".join(f"¶{i}" for i in (e.get("para_indices_b") or [])[:3])
+        a_cell = f"{val_a} ({paras_a})" if paras_a else val_a
+        b_cell = f"{val_b} ({paras_b})" if paras_b else val_b
+        lines.append(
+            f"{e.get('name',''):<22} {e.get('type',''):<14} {a_cell:<22} {b_cell:<22} {e.get('status','')}"
+        )
+    return "\n".join(lines)
 
 
 def _chat_language_instruction(code: Optional[str]) -> str:
@@ -1838,8 +1875,12 @@ async def compare_chat(req: CompareChatRequest):
     doc_text_a = _document_text(req.file_a_id, info_a["type"], file_path_a)
     doc_text_b = _document_text(req.file_b_id, info_b["type"], file_path_b)
 
+    entity_section = ""
+    if req.entity_diff:
+        entity_section = f"\n\n{_format_entity_diff_context(req.entity_diff)}"
+
     system_prompt = (
-        f"{_COMPARE_CHAT_SYSTEM_PROMPT}\n\n"
+        f"{_COMPARE_CHAT_SYSTEM_PROMPT}{entity_section}\n\n"
         f"Document A ({info_a['name']}, type={info_a['type']}):\n\"\"\"\n{doc_text_a}\n\"\"\"\n\n"
         f"Document B ({info_b['name']}, type={info_b['type']}):\n\"\"\"\n{doc_text_b}\n\"\"\""
     )
@@ -1900,6 +1941,106 @@ async def compare_chat(req: CompareChatRequest):
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/graph")
+async def extract_document_graph(req: GraphRequest):
+    from knowledge_graph import extract_graph as _extract_graph
+
+    info = _get_file(req.file_id)
+    file_path = _ensure_local_file(req.file_id)
+
+    def _para_index_map_single(file_id: str, file_type: str, fpath: str) -> list[tuple[int, str]]:
+        if file_type in ("docx", "markdown"):
+            structure = parse_docx(fpath) if file_type == "docx" else parse_markdown(fpath)
+            return [(p["index"], p["text"]) for p in structure["paragraphs"] if p["text"].strip()]
+        structure = parse_pptx(fpath, _pptx_asset_resolver(file_id))
+        return [
+            (slide["index"], shape["text"])
+            for slide in structure["slides"]
+            for shape in slide["shapes"]
+            if shape["text"].strip()
+        ]
+
+    llm = req.llm
+    para_map = _para_index_map_single(req.file_id, info["type"], file_path)
+    logger.info("graph extraction started file_id=%s provider=%s model=%s", req.file_id, llm.provider, llm.model)
+    try:
+        graph = _extract_graph(para_map, llm.provider, llm.model, llm.base_url, llm.api_key, llm.timeout)
+    except TimeoutError as exc:
+        raise HTTPException(504, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("graph extraction failed file_id=%s", req.file_id)
+        raise HTTPException(500, str(exc)) from exc
+
+    logger.info(
+        "graph extraction done file_id=%s entities=%d relationships=%d",
+        req.file_id, len(graph["entities"]), len(graph["relationships"]),
+    )
+    return graph
+
+
+@app.post("/api/compare/entities")
+async def compare_entities(req: CompareEntitiesRequest):
+    from knowledge_graph import compute_entity_diff
+
+    info_a = _get_file(req.file_a_id)
+    info_b = _get_file(req.file_b_id)
+    file_path_a = _ensure_local_file(req.file_a_id)
+    file_path_b = _ensure_local_file(req.file_b_id)
+
+    def _para_index_map(file_id: str, file_type: str, file_path: str) -> list[tuple[int, str]]:
+        if file_type in ("docx", "markdown"):
+            structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
+            return [(p["index"], p["text"]) for p in structure["paragraphs"] if p["text"].strip()]
+        structure = parse_pptx(file_path, _pptx_asset_resolver(file_id))
+        result = []
+        for slide in structure["slides"]:
+            for shape in slide["shapes"]:
+                if shape["text"].strip():
+                    result.append((slide["index"], shape["text"]))
+        return result
+
+    llm = req.llm
+    map_a = _para_index_map(req.file_a_id, info_a["type"], file_path_a)
+    map_b = _para_index_map(req.file_b_id, info_b["type"], file_path_b)
+
+    logger.info(
+        "compare entities started file_a_id=%s file_b_id=%s provider=%s model=%s",
+        req.file_a_id,
+        req.file_b_id,
+        llm.provider,
+        llm.model,
+    )
+
+    try:
+        from knowledge_graph import extract_graph as _extract_graph
+        graph_a = _extract_graph(map_a, llm.provider, llm.model, llm.base_url, llm.api_key, llm.timeout)
+        graph_b = _extract_graph(map_b, llm.provider, llm.model, llm.base_url, llm.api_key, llm.timeout)
+    except TimeoutError as exc:
+        raise HTTPException(504, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("compare entities failed file_a_id=%s file_b_id=%s", req.file_a_id, req.file_b_id)
+        raise HTTPException(500, str(exc)) from exc
+
+    entities_a = graph_a["entities"]
+    entities_b = graph_b["entities"]
+    diff = compute_entity_diff(entities_a, entities_b)
+    logger.info(
+        "compare entities done file_a_id=%s file_b_id=%s entities_a=%d entities_b=%d diff=%d",
+        req.file_a_id,
+        req.file_b_id,
+        len(entities_a),
+        len(entities_b),
+        len(diff),
+    )
+    return {
+        "entities_a": entities_a,
+        "entities_b": entities_b,
+        "relationships_a": graph_a["relationships"],
+        "relationships_b": graph_b["relationships"],
+        "diff": diff,
+    }
 
 
 # ---------- Internal ----------
