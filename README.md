@@ -329,3 +329,6 @@ LOG_BACKUP_COUNT=30
 
 ### Todos
 - Admin page
+- Project dir (vault): open a dir
+- Knowledge Graph
+
