@@ -27,6 +27,8 @@ See [COMMERCIAL.md](COMMERCIAL.md) for commercial licensing inquiries.
 - Shows a **diff before anything is applied**
 - Supports **local models with Ollama** or **hosted APIs like OpenAI**
 - Keeps the workflow **non-destructive** until you click **Accept**
+- **Compares two documents** side-by-side with AI-powered entity diff
+- **Extracts a knowledge graph** from any document and uses it to ground AI chat answers
 
 ## What You Can Do
 
@@ -53,11 +55,66 @@ See [COMMERCIAL.md](COMMERCIAL.md) for commercial licensing inquiries.
 - Add slides
 - Preview slides with a higher-fidelity renderer when LibreOffice + Poppler are installed
 
+## Modes
+
+### AI Mode
+
+The main editing mode. Upload a document and use three tabs in the sidebar:
+
+- **Edit** — give natural-language instructions, review the diff, accept or reject each change
+- **Chat** — ask questions about the document; optionally enable the knowledge graph for more accurate, entity-grounded answers
+- **Graph** — extract a knowledge graph from the document and explore entities and relationships visually
+
+### Manual Mode
+
+Click any paragraph, shape, or table cell to edit it directly inline. Undo/redo is fully supported.
+
+### Compare Mode
+
+Load two documents (from your workspaces or as new uploads) and compare them side-by-side. Three views are available:
+
+- **Documents** — scroll both documents in sync
+- **Entity Diff** — extract entities from both documents with AI and see a structured table of what changed, was added, or was removed
+- **Graph** — view both entity graphs overlaid, with color-coded diff status on each node
+
+The compare chat uses both document texts and the entity diff as context, so it can answer questions like "what changed in section 3?" with entity-level precision.
+
+## Knowledge Graph
+
+Editian can extract a knowledge graph from any document using your configured LLM. The graph captures:
+
+- **Entities** — people, organizations, dates, numbers, locations, products, and concepts, each with a value and the paragraph numbers where they appear
+- **Relationships** — directed connections between entities (e.g. `Acme Corp → employs → John Smith`)
+
+Once extracted, the graph is shown as an interactive force-directed canvas (Obsidian-style). You can zoom, pan, drag nodes, and export the graph as a PNG.
+
+### Using the Graph in AI Chat
+
+After extracting the graph, go to the Chat tab. An indigo **Knowledge graph active** indicator appears above the input bar. When active, every chat message sends the full entity and relationship list to the LLM as structured context — in addition to the document text.
+
+This helps the LLM:
+- Answer entity-specific questions without scanning the full document
+- Cite paragraph numbers accurately
+- Reason about relationships between named entities
+
+You can toggle the graph context on or off at any time without re-extracting.
+
+## Workspaces
+
+The left panel shows your workspaces — one per document. You can:
+
+- Create, rename, and delete workspaces
+- Organize workspaces into directories
+- Branch a workspace to create an independent copy
+- Drag workspaces between directories
+
+Background tasks (graph extraction, entity diff) run independently of which workspace is active. A pulsing indicator in the top bar shows when any task is still processing. Each workspace row shows a spinner while its graph is being extracted, even if you have switched away.
+
 ## Quick Start
 
 ### Docker
 
-If you want the easiest install path, use Docker Compose. The setup now runs separate frontend and backend containers:
+If you want the easiest install path, use Docker Compose. The setup runs separate frontend and backend containers:
 
 - `frontend`: nginx serving the built React app
 - `backend`: FastAPI + LibreOffice + Poppler for document editing and PPTX rendering
@@ -326,9 +383,8 @@ LOG_BACKUP_COUNT=30
 - macOS and Linux are supported for the higher-fidelity PPTX renderer
 - The backend expects `soffice` and `pdftoppm` on the machine for the best PPTX output
 - All edits remain reviewable before you apply them
+- The UI is available in English, Chinese (Simplified), and Korean
 
 ### Todos
 - Admin page
 - Project dir (vault): open a dir
-- Knowledge Graph
-
