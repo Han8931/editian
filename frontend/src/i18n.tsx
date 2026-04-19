@@ -291,6 +291,9 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     graphTab: 'Graph',
     graphEmptyHint: 'Extract entities first to build the knowledge graph.',
     graphContextActive: 'Knowledge graph active',
+    graphContextOff: 'Knowledge graph off',
+    turnOn: 'Turn on',
+    turnOff: 'Turn off',
   },
   zh: {
     appName: 'Editian',
@@ -570,6 +573,9 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     graphTab: '知识图谱',
     graphEmptyHint: '请先提取实体以构建知识图谱。',
     graphContextActive: '知识图谱已启用',
+    graphContextOff: '知识图谱已关闭',
+    turnOn: '开启',
+    turnOff: '关闭',
   },
   ko: {
     appName: 'Editian',
@@ -849,6 +855,9 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     graphTab: '그래프',
     graphEmptyHint: '지식 그래프를 구축하려면 먼저 개체를 추출하세요.',
     graphContextActive: '지식 그래프 활성화됨',
+    graphContextOff: '지식 그래프 비활성화됨',
+    turnOn: '켜기',
+    turnOff: '끄기',
   },
 }
 

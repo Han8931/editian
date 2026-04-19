@@ -58,6 +58,7 @@ export default function Sidebar({
   const graphData = graphTask?.status === 'done' ? graphTask.result : null
   const graphLoading = graphTask?.status === 'pending'
   const graphError = graphTask?.status === 'error' ? graphTask.error : null
+  const [graphContextEnabled, setGraphContextEnabled] = useState(true)
 
   // Edit tab state
   const [instruction, setInstruction] = useState('')
@@ -202,7 +203,7 @@ export default function Sidebar({
         llm,
         scope: hasSelection ? scope : undefined,
         preferred_language: language,
-        graph: graphData ?? undefined,
+        graph: (graphData && graphContextEnabled) ? graphData : undefined,
         onChunk: (chunk) => {
           setChatMessages((prev) => {
             const updated = [...prev]
@@ -240,7 +241,7 @@ export default function Sidebar({
         llm,
         scope: hasSelection ? scope : undefined,
         preferred_language: language,
-        graph: graphData ?? undefined,
+        graph: (graphData && graphContextEnabled) ? graphData : undefined,
         onChunk: (chunk) => {
           setChatMessages((prev) => {
             const updated = [...prev]
@@ -489,10 +490,19 @@ export default function Sidebar({
                 <p className="text-sm font-medium text-gray-600">{msg('askAnything')}</p>
                 <p className="text-xs text-gray-400 leading-relaxed">{msg('chatEmptyState')}</p>
                 {graphData && (
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 border border-indigo-100">
-                    <Network size={11} className="text-indigo-500" />
-                    <span className="text-xs text-indigo-600 font-medium">{msg('graphContextActive')}</span>
-                  </div>
+                  <button
+                    onClick={() => setGraphContextEnabled(e => !e)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
+                      graphContextEnabled
+                        ? 'bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100'
+                        : 'bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Network size={11} />
+                    <span className="text-xs font-medium">
+                      {graphContextEnabled ? msg('graphContextActive') : msg('graphContextOff')}
+                    </span>
+                  </button>
                 )}
               </div>
             )}
@@ -584,11 +594,25 @@ export default function Sidebar({
             <div ref={chatBottomRef} />
           </div>
 
-          {/* Graph context indicator */}
+          {/* Graph context toggle */}
           {graphData && (
-            <div className="flex-shrink-0 flex items-center gap-2 border-t border-gray-200 px-3 py-1.5 bg-indigo-50">
-              <Network size={11} className="text-indigo-500 flex-shrink-0" />
-              <span className="text-xs font-medium text-indigo-700 truncate">{msg('graphContextActive')}</span>
+            <div className={`flex-shrink-0 flex items-center justify-between border-t border-gray-200 px-3 py-1.5 ${graphContextEnabled ? 'bg-indigo-50' : 'bg-gray-50'}`}>
+              <div className="flex items-center gap-1.5">
+                <Network size={11} className={graphContextEnabled ? 'text-indigo-500' : 'text-gray-400'} />
+                <span className={`text-xs font-medium ${graphContextEnabled ? 'text-indigo-700' : 'text-gray-400'}`}>
+                  {graphContextEnabled ? msg('graphContextActive') : msg('graphContextOff')}
+                </span>
+              </div>
+              <button
+                onClick={() => setGraphContextEnabled(e => !e)}
+                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                  graphContextEnabled
+                    ? 'border-indigo-200 text-indigo-600 hover:bg-indigo-100'
+                    : 'border-gray-300 text-gray-500 hover:bg-gray-100'
+                }`}
+              >
+                {graphContextEnabled ? msg('turnOff') : msg('turnOn')}
+              </button>
             </div>
           )}
 
