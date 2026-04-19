@@ -1,7 +1,7 @@
 # Editian
 
 <p align="center">
-  <img src="assets/editian_icon.svg" alt="Editian logo" width="96" />
+  <img src="assets/editian_icon_text.svg" alt="Editian logo" width="96" />
 </p>
 
 <p align="center">
