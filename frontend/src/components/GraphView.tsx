@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods } from 'react-force-graph-2d'
 import { Download, Maximize2, Minimize2, RefreshCcw, ZoomIn, ZoomOut } from 'lucide-react'
 import type { CompareEntitiesResponse, EntityDiffStatus, SingleDocGraphData } from '../types'
@@ -83,8 +83,7 @@ function nodeColor(n: GraphNode): string {
 }
 
 function nodeRadius(n: GraphNode): number {
-  // Base size driven by degree (connections), boosted slightly by paragraph mentions
-  return Math.max(6, Math.min(18, 6 + Math.sqrt(n.degree) * 2.5 + Math.sqrt(n.mentions) * 0.5))
+  return Math.max(3, Math.min(10, 3 + Math.sqrt(n.degree) * 1.5 + Math.sqrt(n.mentions) * 0.3))
 }
 
 // ── Graph data builder ─────────────────────────────────────────────────────
@@ -147,10 +146,10 @@ export default function GraphView({ data, onNodeClick }: Props) {
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 600, height: 500 })
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null)
+  const hoveredNodeRef = useRef<GraphNode | null>(null)
   const [expanded, setExpanded] = useState(false)
-  const compareData = toCompareResponse(data)
-  const graphData = buildGraphData(compareData)
   const isSingleDoc = !isCompareData(data)
+  const graphData = useMemo(() => buildGraphData(toCompareResponse(data)), [data])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -168,7 +167,7 @@ export default function GraphView({ data, onNodeClick }: Props) {
     const y = n.y ?? 0
     const r = nodeRadius(n)
     const color = nodeColor(n)
-    const isHovered = hoveredNode?.id === n.id
+    const isHovered = hoveredNodeRef.current?.id === n.id
 
     // ── Glow (only when hovered or notable) ──
     if (isHovered) {
@@ -201,10 +200,10 @@ export default function GraphView({ data, onNodeClick }: Props) {
     ctx.fillStyle = 'rgba(255,255,255,0.18)'
     ctx.fill()
 
-    // ── Label: show at medium zoom, fixed 12 px on screen ──
-    const LABEL_SHOW_SCALE = 0.45
+    // ── Label: show at medium zoom, fixed 11 px on screen ──
+    const LABEL_SHOW_SCALE = 0.3
     if (globalScale >= LABEL_SHOW_SCALE || isHovered) {
-      const screenFontSize = 12
+      const screenFontSize = 11
       const fontSize = screenFontSize / globalScale
       ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`
       const label = n.name
@@ -226,7 +225,7 @@ export default function GraphView({ data, onNodeClick }: Props) {
       ctx.fillStyle = isHovered ? '#e0e4f6' : '#9aa5ce'
       ctx.fillText(label, lx, ly)
     }
-  }, [hoveredNode])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Link painter ──────────────────────────────────────────────────────────
   const paintLink = useCallback((link: object, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -246,9 +245,9 @@ export default function GraphView({ data, onNodeClick }: Props) {
     const tgtR = nodeRadius(tgt)
 
     // Arrow dimensions in world space
-    const ARROW_LEN = 7 / globalScale
-    const ARROW_HALF = 3 / globalScale
-    const LINE_W = 1.5 / globalScale
+    const ARROW_LEN = 5 / globalScale
+    const ARROW_HALF = 2.5 / globalScale
+    const LINE_W = 1 / globalScale
 
     // Start & end points (node border, not center)
     const x1 = sx + ux * srcR
@@ -257,7 +256,7 @@ export default function GraphView({ data, onNodeClick }: Props) {
     const y2 = ty - uy * (tgtR + ARROW_LEN)
 
     const color = EDGE_COLORS[l.side] ?? EDGE_COLORS['both']
-    const alpha = 0.55
+    const alpha = 0.75
     const hex2 = Math.round(alpha * 255).toString(16).padStart(2, '0')
 
     // ── Line ──
@@ -371,7 +370,10 @@ export default function GraphView({ data, onNodeClick }: Props) {
             linkCanvasObject={paintLink}
             linkCanvasObjectMode={() => 'replace'}
             onNodeClick={node => onNodeClick?.(node as GraphNode)}
-            onNodeHover={node => setHoveredNode(node as GraphNode | null)}
+            onNodeHover={node => {
+              hoveredNodeRef.current = node as GraphNode | null
+              setHoveredNode(node as GraphNode | null)
+            }}
             cooldownTicks={150}
             onEngineStop={fitView}
             enableNodeDrag

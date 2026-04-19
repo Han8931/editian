@@ -7,6 +7,7 @@ import ModePanel from './components/ModePanel'
 import CompareMode from './components/CompareMode'
 import WorkspacePanel from './components/WorkspacePanel'
 import { deleteFile, getFile, branchFile, getDownloadUrl, applyRevisions, undoRevision, redoRevision } from './api/client'
+import { useAnyPending } from './stores/backgroundTasks'
 import type { AppMode, CompareSlot, UploadResponse, Revision, Workspace, Directory, PptxStructure, Shape, SlideParagraph } from './types'
 import editianLogo from '../../assets/editian_icon.svg'
 import { useI18n } from './i18n'
@@ -122,6 +123,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export default function App() {
   const { msg } = useI18n()
+  const anyPending = useAnyPending()
   const defaultWorkspaceName = msg('newWorkspace')
   // ── Workspace state ────────────────────────────────────────────────────
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => {
@@ -544,6 +546,15 @@ export default function App() {
           </>
         )}
         <div className="ml-auto flex items-center gap-3">
+          {anyPending && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-100">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+              </span>
+              <span className="text-xs text-blue-600 font-medium">{msg('processingBackground')}</span>
+            </div>
+          )}
           <div className="flex items-center bg-blue-50 rounded-lg p-0.5 border border-blue-100">
             {(['ai', 'manual', 'compare'] as const).map((nextMode) => (
               <button

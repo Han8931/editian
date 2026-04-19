@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
-import { Plus, Trash2, FileText, Pencil, GitBranch, FolderOpen, Folder, FolderPlus, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, FileText, Pencil, GitBranch, FolderOpen, Folder, FolderPlus, ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
 import type { Workspace, Directory } from '../types'
 import { useI18n } from '../i18n'
+import { useTask } from '../stores/backgroundTasks'
 
 interface Props {
   workspaces: Workspace[]
@@ -138,6 +139,8 @@ export default function WorkspacePanel({
     const isEditing = editingWsId === ws.id
     const isBranch  = !!ws.parentId
     const isDraggable = !isBranch
+    const graphTask = useTask(ws.doc ? `graph:${ws.doc.file_id}` : '__none__')
+    const isProcessing = graphTask?.status === 'pending'
 
     return (
       <div
@@ -179,6 +182,9 @@ export default function WorkspacePanel({
           </span>
         )}
 
+        {isProcessing && (
+          <Loader2 size={10} className="flex-shrink-0 animate-spin text-blue-400" />
+        )}
         {ws.doc && <FileBadge type={ws.doc.file_type} />}
 
         {!isEditing && (

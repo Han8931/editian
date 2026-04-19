@@ -7,6 +7,7 @@ import Settings from './Settings'
 import EntityDiffPanel from './EntityDiffPanel'
 import GraphView from './GraphView'
 import { useI18n } from '../i18n'
+import { clearTask } from '../stores/backgroundTasks'
 import type { ChatMessage, CompareEntitiesResponse, CompareSlot, EntityDiffItem, LLMConfig, PptxStructure, TextDocumentStructure, UploadResponse } from '../types'
 
 interface Props {
@@ -305,6 +306,7 @@ export default function CompareMode({
   const isDraggingChatRef = useRef(false)
   const stickToBottomRef = useRef(true)
   const copyResetTimerRef = useRef<number | null>(null)
+  const prevEntitiesKeyRef = useRef<string | null>(null)
 
   const ready = !!slotA && !!slotB
   const prompts = useMemo(() => msg<string[]>('compareStarterPrompts'), [msg])
@@ -330,11 +332,19 @@ export default function CompareMode({
   }, [chatPaneWidth])
 
   useEffect(() => {
-    setMessages([])
-    setChatError(null)
-    setEntityDiff(null)
-    setGraphData(null)
-    stickToBottomRef.current = true
+    const nextKey = slotA?.doc.file_id && slotB?.doc.file_id
+      ? `entities:${slotA.doc.file_id}:${slotB.doc.file_id}`
+      : null
+    // Only clear when the slot pair genuinely changes, not on initial mount or workspace switch
+    if (prevEntitiesKeyRef.current && prevEntitiesKeyRef.current !== nextKey) {
+      clearTask(prevEntitiesKeyRef.current)
+      setMessages([])
+      setChatError(null)
+      setEntityDiff(null)
+      setGraphData(null)
+      stickToBottomRef.current = true
+    }
+    prevEntitiesKeyRef.current = nextKey
   }, [slotA?.doc.file_id, slotB?.doc.file_id])
 
   useEffect(() => {

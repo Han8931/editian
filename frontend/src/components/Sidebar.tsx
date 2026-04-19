@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage, SingleDocGraphData } from '../types'
 import { reviseDocument, applyRevisions, chatWithDocument, extractDocumentGraph } from '../api/client'
+import { clearTask, runTask, useTask } from '../stores/backgroundTasks'
 import DiffViewer from './DiffViewer'
 import Settings from './Settings'
 import GraphView from './GraphView'
@@ -51,10 +52,12 @@ export default function Sidebar({
   const chatOnly = view === 'chat'
   const [activeTab, setActiveTab] = useState<'edit' | 'chat' | 'graph'>(chatOnly ? 'chat' : 'edit')
 
-  // Graph tab state
-  const [graphData, setGraphData] = useState<SingleDocGraphData | null>(null)
-  const [graphLoading, setGraphLoading] = useState(false)
-  const [graphError, setGraphError] = useState<string | null>(null)
+  // Graph tab state — backed by background task store so it survives workspace switches
+  const graphTaskKey = `graph:${doc.file_id}`
+  const graphTask = useTask<SingleDocGraphData>(graphTaskKey)
+  const graphData = graphTask?.status === 'done' ? graphTask.result : null
+  const graphLoading = graphTask?.status === 'pending'
+  const graphError = graphTask?.status === 'error' ? graphTask.error : null
 
   // Edit tab state
   const [instruction, setInstruction] = useState('')
@@ -103,10 +106,6 @@ export default function Sidebar({
     }
   }, [chatOnly, activeTab, doc.file_id])
 
-  useEffect(() => {
-    setGraphData(null)
-    setGraphError(null)
-  }, [doc.file_id])
 
   useEffect(() => () => {
     if (copyResetTimerRef.current != null) {
@@ -203,6 +202,7 @@ export default function Sidebar({
         llm,
         scope: hasSelection ? scope : undefined,
         preferred_language: language,
+        graph: graphData ?? undefined,
         onChunk: (chunk) => {
           setChatMessages((prev) => {
             const updated = [...prev]
@@ -240,6 +240,7 @@ export default function Sidebar({
         llm,
         scope: hasSelection ? scope : undefined,
         preferred_language: language,
+        graph: graphData ?? undefined,
         onChunk: (chunk) => {
           setChatMessages((prev) => {
             const updated = [...prev]
@@ -260,15 +261,11 @@ export default function Sidebar({
   }
 
   async function handleExtractGraph() {
-    setGraphLoading(true)
-    setGraphError(null)
+    clearTask(graphTaskKey)
     try {
-      const result = await extractDocumentGraph({ file_id: doc.file_id, llm })
-      setGraphData(result)
-    } catch (e) {
-      setGraphError(e instanceof Error ? e.message : msg('entityDiffError'))
-    } finally {
-      setGraphLoading(false)
+      await runTask(graphTaskKey, () => extractDocumentGraph({ file_id: doc.file_id, llm }))
+    } catch {
+      // error stored in task state
     }
   }
 
@@ -491,6 +488,12 @@ export default function Sidebar({
                 </div>
                 <p className="text-sm font-medium text-gray-600">{msg('askAnything')}</p>
                 <p className="text-xs text-gray-400 leading-relaxed">{msg('chatEmptyState')}</p>
+                {graphData && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 border border-indigo-100">
+                    <Network size={11} className="text-indigo-500" />
+                    <span className="text-xs text-indigo-600 font-medium">{msg('graphContextActive')}</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -580,6 +583,14 @@ export default function Sidebar({
 
             <div ref={chatBottomRef} />
           </div>
+
+          {/* Graph context indicator */}
+          {graphData && (
+            <div className="flex-shrink-0 flex items-center gap-2 border-t border-gray-200 px-3 py-1.5 bg-indigo-50">
+              <Network size={11} className="text-indigo-500 flex-shrink-0" />
+              <span className="text-xs font-medium text-indigo-700 truncate">{msg('graphContextActive')}</span>
+            </div>
+          )}
 
           {/* Selection context indicator */}
           {selectionLabel && (

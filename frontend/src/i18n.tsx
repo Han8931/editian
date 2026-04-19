@@ -78,6 +78,7 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     aiChatModeLabel: 'AI Chat',
     compareModeLabel: 'Compare',
     versusLabel: 'vs',
+    processingBackground: 'Processing…',
     howToEdit: 'How to edit',
     manualEditTitle: 'Manual Edit',
     clickToEditParagraph: 'Click on any paragraph to place the cursor.',
@@ -289,6 +290,7 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     ],
     graphTab: 'Graph',
     graphEmptyHint: 'Extract entities first to build the knowledge graph.',
+    graphContextActive: 'Knowledge graph active',
   },
   zh: {
     appName: 'Editian',
@@ -355,6 +357,7 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     aiChatModeLabel: 'AI 聊天',
     compareModeLabel: '对比',
     versusLabel: '对',
+    processingBackground: '处理中…',
     howToEdit: '编辑方式',
     manualEditTitle: '手动编辑',
     clickToEditParagraph: '点击任意段落即可定位光标。',
@@ -566,6 +569,7 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     ],
     graphTab: '知识图谱',
     graphEmptyHint: '请先提取实体以构建知识图谱。',
+    graphContextActive: '知识图谱已启用',
   },
   ko: {
     appName: 'Editian',
@@ -632,6 +636,7 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     aiChatModeLabel: 'AI 채팅',
     compareModeLabel: '비교',
     versusLabel: 'vs',
+    processingBackground: '처리 중…',
     howToEdit: '편집 방법',
     manualEditTitle: '수동 편집',
     clickToEditParagraph: '아무 단락이나 클릭해 커서를 놓으세요.',
@@ -843,6 +848,7 @@ const MESSAGES: Record<LanguageCode, TranslationMap> = {
     ],
     graphTab: '그래프',
     graphEmptyHint: '지식 그래프를 구축하려면 먼저 개체를 추출하세요.',
+    graphContextActive: '지식 그래프 활성화됨',
   },
 }
 

@@ -1,16 +1,19 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
 import { AlertCircle, GitCompare, Loader2, RefreshCcw } from 'lucide-react'
 import { extractCompareEntities } from '../api/client'
 import { useI18n } from '../i18n'
+import { clearTask, runTask, useTask } from '../stores/backgroundTasks'
 import type { CompareEntitiesResponse, CompareSlot, EntityDiffItem, EntityDiffStatus, LLMConfig } from '../types'
-
-
 
 interface Props {
   slotA: CompareSlot
   slotB: CompareSlot
   llm: LLMConfig
   onExtracted?: (diff: EntityDiffItem[], fullData: CompareEntitiesResponse) => void
+}
+
+function taskKey(fileAId: string, fileBId: string) {
+  return `entities:${fileAId}:${fileBId}`
 }
 
 const STATUS_STYLES: Record<EntityDiffStatus, string> = {
@@ -80,25 +83,30 @@ function EntityRow({ item, paraHint, statusLabel }: { item: EntityDiffItem; para
 
 export default function EntityDiffPanel({ slotA, slotB, llm, onExtracted }: Props) {
   const { msg } = useI18n()
-  const [result, setResult] = useState<CompareEntitiesResponse | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const key = taskKey(slotA.doc.file_id, slotB.doc.file_id)
+  const task = useTask<CompareEntitiesResponse>(key)
+
+  const result = task?.status === 'done' ? task.result : null
+  const loading = task?.status === 'pending'
+  const error = task?.status === 'error' ? task.error : null
+
+  // Notify parent whenever a result arrives (including after remount)
+  useEffect(() => {
+    if (result) onExtracted?.(result.diff, result)
+  }, [result]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleExtract() {
-    setLoading(true)
-    setError(null)
+    clearTask(key)
     try {
-      const data = await extractCompareEntities({
-        file_a_id: slotA.doc.file_id,
-        file_b_id: slotB.doc.file_id,
-        llm,
-      })
-      setResult(data)
-      onExtracted?.(data.diff, data)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : msg('entityDiffError'))
-    } finally {
-      setLoading(false)
+      await runTask(key, () =>
+        extractCompareEntities({
+          file_a_id: slotA.doc.file_id,
+          file_b_id: slotB.doc.file_id,
+          llm,
+        }),
+      )
+    } catch {
+      // error already stored in task state
     }
   }
 

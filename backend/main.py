@@ -1590,6 +1590,7 @@ class ChatRequest(BaseModel):
     llm: LLMConfig
     scope: Optional[RevisionScope] = None
     preferred_language: Optional[str] = None
+    graph: Optional[dict] = None
 
 
 class CompareChatRequest(BaseModel):
@@ -1653,6 +1654,33 @@ def _format_entity_diff_context(entity_diff: list[dict]) -> str:
         lines.append(
             f"{e.get('name',''):<22} {e.get('type',''):<14} {a_cell:<22} {b_cell:<22} {e.get('status','')}"
         )
+    return "\n".join(lines)
+
+
+def _format_graph_context(graph: dict) -> str:
+    """Format a single-document knowledge graph as a structured context block for the LLM."""
+    entities = graph.get("entities") or []
+    relationships = graph.get("relationships") or []
+    if not entities:
+        return ""
+    lines = [
+        "Knowledge graph (pre-extracted by AI analysis):",
+        "Use this graph to give precise, entity-grounded answers. "
+        "Reference entities by name and cite paragraph numbers (¶N) when possible.",
+        "",
+        "Entities:",
+    ]
+    for e in entities:
+        paras = ", ".join(f"¶{i}" for i in (e.get("para_indices") or [])[:4])
+        value = e.get("value") or ""
+        detail = f" = {value}" if value else ""
+        location = f" [{paras}]" if paras else ""
+        lines.append(f"  • {e.get('name','')} ({e.get('type','')}){detail}{location}")
+    if relationships:
+        lines.append("")
+        lines.append("Relationships:")
+        for r in relationships:
+            lines.append(f"  {r.get('source','')} → {r.get('label','')} → {r.get('target','')}")
     return "\n".join(lines)
 
 
@@ -1800,8 +1828,9 @@ async def chat(req: ChatRequest):
 
     doc_text = _document_text(req.file_id, file_type, file_path)
 
-    # Build system prompt — append selected passage when a scope is provided
-    system_prompt = f"{_CHAT_SYSTEM_PROMPT}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
+    # Build system prompt — optionally inject graph, then selected passage
+    graph_section = f"\n\n{_format_graph_context(req.graph)}" if req.graph else ""
+    system_prompt = f"{_CHAT_SYSTEM_PROMPT}{graph_section}\n\nDocument content:\n\"\"\"\n{doc_text}\n\"\"\""
     language_instruction = _chat_language_instruction(req.preferred_language)
     if language_instruction:
         system_prompt = f"{system_prompt}\n\n{language_instruction}"

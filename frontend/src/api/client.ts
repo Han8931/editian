@@ -116,6 +116,7 @@ export async function chatWithDocument(params: {
   llm: LLMConfig
   scope?: RevisionScope
   preferred_language?: LanguageCode
+  graph?: SingleDocGraphData
   onChunk: (chunk: string) => void
   signal?: AbortSignal
 }): Promise<void> {
@@ -134,6 +135,7 @@ export async function chatWithDocument(params: {
         timeout: params.llm.timeout,
       },
       preferred_language: params.preferred_language,
+      graph: params.graph ?? null,
     }),
     signal: params.signal,
   })
