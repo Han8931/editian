@@ -4,9 +4,9 @@
   <img src="assets/editian_icon_text.svg" alt="Editian logo" width="100" />
 </p>
 
-<p align="center">
-  Edit Word and PowerPoint files with AI, review every change, and keep full control.
-</p>
+<!-- <p align="center"> -->
+<!--   Edit Word and PowerPoint files with AI, review every change, and keep full control. -->
+<!-- </p> -->
 
 Editian is a browser-based editor for `.docx`, `.pptx`, and markdown files. Upload a document, describe what you want in plain language, review the before/after diff, and accept only the changes you want.
 
