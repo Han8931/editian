@@ -357,7 +357,7 @@ function formattingChanged(a: CapturedFormatting | undefined, b: CapturedFormatt
 }
 
 function normalizeEditedText(fileType: UploadResponse['file_type'], value: string): string {
-  if (fileType === 'markdown') {
+  if (fileType === 'markdown' || fileType === 'latex') {
     return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, '')
   }
   return value.trim()
@@ -392,7 +392,10 @@ export default function DocumentPreview({
   const { msg } = useI18n()
   const isManual = mode === 'manual'
   const isMarkdown = doc.file_type === 'markdown'
-  const isTextDocument = doc.file_type === 'docx' || doc.file_type === 'markdown'
+  const isLatex = doc.file_type === 'latex'
+  // Markdown and LaTeX share the same "edit the raw source block" flow.
+  const isSourceText = isMarkdown || isLatex
+  const isTextDocument = doc.file_type === 'docx' || isMarkdown || isLatex
   const textStructure = isTextDocument ? doc.structure as TextDocumentStructure : null
   const paragraphs = textStructure?.paragraphs ?? []
 
@@ -1495,9 +1498,7 @@ export default function DocumentPreview({
               row_index: editing.cellRef.r,
               cell_index: editing.cellRef.c,
             }
-      } else if (doc.file_type === 'docx') {
-        scope = { type: 'paragraphs', paragraph_indices: [editing.index] }
-      } else if (doc.file_type === 'markdown') {
+      } else if (doc.file_type === 'docx' || doc.file_type === 'markdown' || doc.file_type === 'latex') {
         scope = { type: 'paragraphs', paragraph_indices: [editing.index] }
       } else {
         scope = { type: 'shape', slide_index: currentSlide, shape_indices: [editing.index] }
@@ -1521,12 +1522,12 @@ export default function DocumentPreview({
 
   // AI-mode bottom panel (not shown in manual mode)
   function EditingPanel() {
-    if (!editing || (isManual && !isMarkdown)) return null
+    if (!editing || (isManual && !isSourceText)) return null
     return (
       <div className="bg-white border-t border-gray-200 shadow-lg px-8 py-4 flex-shrink-0">
         <div className="max-w-3xl mx-auto flex flex-col gap-2">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            {editing.cellRef ? msg('editCell') : isTextDocument ? (isMarkdown ? msg('editMarkdownBlock') : msg('editParagraph')) : msg('editShape')}
+            {editing.cellRef ? msg('editCell') : isTextDocument ? (isLatex ? msg('editLatexBlock') : isMarkdown ? msg('editMarkdownBlock') : msg('editParagraph')) : msg('editShape')}
           </div>
           <textarea
             ref={editTextareaRef}
@@ -1535,7 +1536,7 @@ export default function DocumentPreview({
             value={editing.text}
             onChange={(e) => {
               setEditing({ ...editing, text: e.target.value })
-              if (isMarkdown && isManual) {
+              if (isSourceText && isManual) {
                 setManualEditorActive(true)
                 setHasPendingEdit(
                   normalizeEditedText(doc.file_type, e.target.value) !== normalizeEditedText(doc.file_type, editing.original),
@@ -1548,7 +1549,7 @@ export default function DocumentPreview({
             }}
           />
           <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">{isMarkdown && isManual ? msg('markdownEditHelp') : msg('genericEditHelp')}</p>
+            <p className="text-xs text-gray-400">{isSourceText && isManual ? (isLatex ? msg('latexEditHelp') : msg('markdownEditHelp')) : msg('genericEditHelp')}</p>
             <div className="flex gap-2">
               <button
                 onClick={cancelEdit}
@@ -1573,7 +1574,7 @@ export default function DocumentPreview({
   if (isTextDocument) {
     const paragraphMap = new Map(paragraphs.map((p) => [p.index, p]))
     const structureIndices = new Set(paragraphs.map((p) => p.index))
-    const previewClass = doc.file_type === 'markdown' ? 'markdown-preview' : 'docx-preview'
+    const previewClass = isLatex ? 'latex-preview' : isMarkdown ? 'markdown-preview' : 'docx-preview'
 
     const highlightCSS =
       !isManual && selectedIndices.length > 0
@@ -1614,7 +1615,7 @@ export default function DocumentPreview({
             }}
             onMouseDown={(e) => {
               if (isManual) {
-                if (isMarkdown) {
+                if (isSourceText) {
                   const el = (e.target as Element).closest('[data-para-index]') as HTMLElement | null
                   if (!el) return
                   const idx = Number(el.getAttribute('data-para-index'))
@@ -1693,7 +1694,7 @@ export default function DocumentPreview({
               commitDocxEdit()
             } : undefined}
             onKeyDown={isManual ? (e) => {
-              if (isMarkdown) {
+              if (isSourceText) {
                 if (e.key === 'Escape' && editing) {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1724,7 +1725,19 @@ export default function DocumentPreview({
               className={`max-w-3xl mx-auto bg-white shadow-md rounded-xl p-12 min-h-[calc(100vh-8rem)] ${previewClass}`}
               style={{ zoom: `${zoom}%` }}
             >
-              {isMarkdown ? (
+              {isLatex ? (
+                <div>
+                  {paragraphs.map((paragraph) => (
+                    <pre
+                      key={paragraph.index}
+                      data-para-index={paragraph.index}
+                      className="latex-block"
+                    >
+                      {paragraph.text}
+                    </pre>
+                  ))}
+                </div>
+              ) : isMarkdown ? (
                 <div>
                   {paragraphs.map((paragraph) => (
                     <div

@@ -81,6 +81,22 @@ function CompareMarkdownDocument({ doc }: { doc: UploadResponse }) {
   )
 }
 
+function CompareLatexDocument({ doc }: { doc: UploadResponse }) {
+  const { paragraphs } = doc.structure as TextDocumentStructure
+
+  return (
+    <div className="latex-preview">
+      {paragraphs
+        .filter((paragraph) => paragraph.text.trim())
+        .map((paragraph) => (
+          <pre key={paragraph.index} className="latex-block">
+            {paragraph.text}
+          </pre>
+        ))}
+    </div>
+  )
+}
+
 function CompareDocxDocument({ doc }: { doc: UploadResponse }) {
   if (!doc.html) {
     const { paragraphs } = doc.structure as TextDocumentStructure
@@ -122,7 +138,7 @@ function CompareDocumentPane({
 
   async function handleFile(file: File) {
     const ext = file.name.split('.').pop()?.toLowerCase()
-    if (ext !== 'docx' && ext !== 'pptx' && ext !== 'md' && ext !== 'markdown') {
+    if (ext !== 'docx' && ext !== 'pptx' && ext !== 'md' && ext !== 'markdown' && ext !== 'tex' && ext !== 'latex') {
       setError(msg('uploadUnsupported'))
       return
     }
@@ -146,7 +162,7 @@ function CompareDocumentPane({
         </div>
         {doc && (
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${typeBadgeClass(doc.file_type)}`}>
-            {doc.file_type === 'markdown' ? 'md' : doc.file_type}
+            {doc.file_type === 'markdown' ? 'md' : doc.file_type === 'latex' ? 'tex' : doc.file_type}
           </span>
         )}
       </div>
@@ -180,6 +196,10 @@ function CompareDocumentPane({
           ) : doc.file_type === 'markdown' ? (
             <div className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-7 lg:p-10">
               <CompareMarkdownDocument doc={doc} />
+            </div>
+          ) : doc.file_type === 'latex' ? (
+            <div className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-7 lg:p-10">
+              <CompareLatexDocument doc={doc} />
             </div>
           ) : doc.file_type === 'docx' ? (
             <div className="rounded-[28px] border border-gray-200 bg-white shadow-sm p-7 lg:p-10">
@@ -228,7 +248,7 @@ function CompareDocumentPane({
         <input
           id={inputId}
           type="file"
-          accept=".docx,.pptx,.md,.markdown,text/markdown"
+          accept=".docx,.pptx,.md,.markdown,.tex,.latex,text/markdown,text/x-tex"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]

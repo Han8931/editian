@@ -49,6 +49,11 @@
 .markdown-preview hr { border: 0; border-top: 1px solid #d1d5db; margin: 1.2em 0; }
 .markdown-block { border-radius: 6px; padding: 2px 4px; margin: 0 -4px 0.45em; }
 
+/* LaTeX source preview — blocks of raw .tex source, edited as plain text */
+.latex-preview { font-family: 'SFMono-Regular', 'Menlo', 'Consolas', monospace; font-size: 0.9rem; color: #1f2937; line-height: 1.55; }
+.latex-block { white-space: pre-wrap; word-break: break-word; margin: 0 -6px 0.7em; padding: 6px 6px; border-radius: 6px; background: #f8fafc; border: 1px solid #eef2f7; tab-size: 2; }
+.latex-block:hover { background: #f1f5f9; }
+
 /* Revise button shimmer animation */
 @keyframes shimmer {
   0%   { background-position: 200% center; }

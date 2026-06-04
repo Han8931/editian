@@ -107,7 +107,7 @@ export interface PptxStructure {
 
 export interface UploadResponse {
   file_id: string
-  file_type: 'docx' | 'pptx' | 'markdown'
+  file_type: 'docx' | 'pptx' | 'markdown' | 'latex'
   name: string
   html?: string
   structure: TextDocumentStructure | PptxStructure

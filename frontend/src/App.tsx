@@ -432,6 +432,8 @@ export default function App() {
       ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
       : ext === 'md' || ext === 'markdown'
       ? 'text/markdown'
+      : ext === 'tex' || ext === 'latex'
+      ? 'text/x-tex'
       : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
     if ('showSaveFilePicker' in window) {

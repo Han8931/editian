@@ -11,7 +11,9 @@ interface Props {
 export default function ModePanel({ doc, style }: Props) {
   const { msg } = useI18n()
   const isPptx = doc.file_type === 'pptx'
-  const isMarkdown = doc.file_type === 'markdown'
+  const isLatex = doc.file_type === 'latex'
+  // Markdown and LaTeX share the "edit raw source block" manual flow.
+  const isMarkdown = doc.file_type === 'markdown' || isLatex
   const undoLabel = msg('undo')
   const cancelEditLabel = msg('cancelEdit')
 
@@ -34,8 +36,8 @@ export default function ModePanel({ doc, style }: Props) {
         <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-blue-600 mb-2">{msg('howToEdit')}</div>
           <div className="space-y-1.5 text-sm text-blue-900">
-            <p>{isPptx ? msg('clickToEditTextBox') : isMarkdown ? msg('clickToEditMarkdownBlock') : msg('clickToEditParagraph')}</p>
-            <p>{isMarkdown ? msg('editMarkdownSource') : msg('typeToEditAutoSave')}</p>
+            <p>{isPptx ? msg('clickToEditTextBox') : isLatex ? msg('clickToEditLatexBlock') : isMarkdown ? msg('clickToEditMarkdownBlock') : msg('clickToEditParagraph')}</p>
+            <p>{isLatex ? msg('editLatexSource') : isMarkdown ? msg('editMarkdownSource') : msg('typeToEditAutoSave')}</p>
             <p>{isMarkdown ? msg('discardCurrentBlock') : msg('discardCurrentElement')}</p>
           </div>
         </div>
@@ -64,7 +66,7 @@ export default function ModePanel({ doc, style }: Props) {
           <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">{msg('notes')}</div>
           <div className="space-y-2 text-sm text-gray-500">
             {!isMarkdown && <p>{msg('manualNotesRichText')}</p>}
-            {isMarkdown && <p>{msg('manualNotesMarkdown')}</p>}
+            {isMarkdown && <p>{msg(isLatex ? 'manualNotesLatex' : 'manualNotesMarkdown')}</p>}
             <p>{msg('manualNotesAi')}</p>
           </div>
         </div>

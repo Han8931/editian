@@ -16,7 +16,7 @@ export default function FileUpload({ onUpload }: Props) {
 
   const handleFile = useCallback(async (file: File) => {
     const ext = file.name.split('.').pop()?.toLowerCase()
-    if (ext !== 'docx' && ext !== 'pptx' && ext !== 'md' && ext !== 'markdown') {
+    if (ext !== 'docx' && ext !== 'pptx' && ext !== 'md' && ext !== 'markdown' && ext !== 'tex' && ext !== 'latex') {
       setError(msg('uploadUnsupported'))
       return
     }
@@ -55,7 +55,7 @@ export default function FileUpload({ onUpload }: Props) {
         <input
           id="file-input"
           type="file"
-          accept=".docx,.pptx,.md,.markdown,text/markdown"
+          accept=".docx,.pptx,.md,.markdown,.tex,.latex,text/markdown,text/x-tex"
           className="hidden"
           onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
         />

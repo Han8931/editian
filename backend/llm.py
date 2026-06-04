@@ -13,7 +13,7 @@ import json
 import re
 import logging
 import os
-from typing import Annotated, Generator, Optional
+from typing import Annotated, Callable, Generator, Optional
 from urllib.parse import urlparse, urlunparse
 
 from langchain_openai import ChatOpenAI
@@ -303,18 +303,25 @@ def run_text_revision(
     api_key: Optional[str] = None,
     timeout: float = 120,
     allow_markdown: bool = False,
+    allow_latex: bool = False,
 ) -> str:
     """
     Tool-free fallback for models that can't produce structured tool calls.
     Ask the model to output the revised text directly.
     """
     lm = _get_model(provider, model, base_url, api_key, timeout)
-    output_rule = (
-        "No explanation. No quotes around the output. "
-        "Output valid markdown source text."
-        if allow_markdown
-        else "No explanation. No quotes around the output. No markdown."
-    )
+    if allow_latex:
+        output_rule = (
+            "No explanation. No quotes around the output. "
+            "Output valid LaTeX source text only."
+        )
+    elif allow_markdown:
+        output_rule = (
+            "No explanation. No quotes around the output. "
+            "Output valid markdown source text."
+        )
+    else:
+        output_rule = "No explanation. No quotes around the output. No markdown."
     messages: list[BaseMessage] = [
         SystemMessage(
             "You are a text editor. Apply the instruction to the given text. "
@@ -336,6 +343,63 @@ def run_text_revision(
                 "Try a lighter model, or increase the timeout in Settings."
             )
         raise
+
+
+def run_tool_agent(
+    system_prompt: str,
+    user_message: str,
+    tools: list[dict],
+    tool_executor: Callable[[str, dict], str],
+    provider: str,
+    model: str,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: float = 120,
+    max_iterations: int = 20,
+) -> str:
+    """Execute-and-observe agent loop (Codex / Claude-Code style).
+
+    The model is given `tools` and decides which to call. Each call is run by
+    `tool_executor(name, args) -> observation_str`; the observation is appended
+    to the conversation so the model can reason over it (read a file, search,
+    stage an edit, etc.). Loops until the model stops calling tools or
+    `max_iterations` is reached. Returns the model's final natural-language
+    summary.
+    """
+    lm = _get_model(provider, model, base_url, api_key, timeout).bind_tools(tools)
+    messages: list[BaseMessage] = [SystemMessage(system_prompt), HumanMessage(user_message)]
+    final_text = ""
+    try:
+        for _ in range(max_iterations):
+            response = lm.invoke(messages)
+            messages.append(response)
+            calls = getattr(response, "tool_calls", None) or []
+            if not calls:
+                final_text = response.content or ""
+                break
+            for call in calls:
+                name = call.get("name", "")
+                args = call.get("args", {}) or {}
+                try:
+                    observation = tool_executor(name, args)
+                except Exception as exc:  # surface tool errors back to the model
+                    observation = f"ERROR: {exc}"
+                logger.debug("project agent tool=%s args=%s -> %d chars", name, args, len(observation))
+                messages.append(ToolMessage(content=observation, tool_call_id=call.get("id", name)))
+        else:
+            # Hit the iteration cap without a tool-free final turn.
+            final_text = (
+                "Reached the maximum number of reasoning steps. "
+                "Review the proposed edits collected so far."
+            )
+    except Exception as e:
+        if _is_timeout(e):
+            raise TimeoutError(
+                f"The model took too long to respond (limit: {int(timeout)} s). "
+                "Try a lighter model, or increase the timeout in Settings."
+            )
+        raise
+    return final_text
 
 
 def stream_chat(

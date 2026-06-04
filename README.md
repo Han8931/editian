@@ -392,4 +392,4 @@ LOG_BACKUP_COUNT=30
 - Support PDF
 - Markdown extraction
 - OCR / Overlay translation
-
+- Latex project file reading. 

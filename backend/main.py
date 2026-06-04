@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 import mimetypes
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,14 +18,18 @@ from typing import Optional
 
 from parsers.docx_parser import parse_docx, get_docx_html, get_cell_text, get_table_cells
 from parsers.markdown_parser import parse_markdown
+from parsers.latex_parser import parse_latex
 from parsers.pptx_parser import parse_pptx, get_pptx_cell_text, get_pptx_table_cells
 from writers.docx_writer import apply_docx_revisions
 from writers.markdown_writer import apply_markdown_revisions
+from writers.latex_writer import apply_latex_revisions
 from writers.pptx_writer import apply_pptx_revisions
 from llm import probe_model, run_agent_loop, run_chat, run_text_revision, stream_chat
 from logging_config import clear_request_id, get_request_id, reset_request_id, set_request_id, setup_logging
 from storage import S3DocumentStorage, StorageConfigError
 import slide_renderer
+import projects
+from project_agent import run_project_agent
 
 load_dotenv(Path(__file__).with_name(".env"))
 setup_logging()
@@ -48,6 +52,9 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 SLIDES_DIR = FILES_DIR.parent / "slide_images"
 SLIDES_DIR.mkdir(parents=True, exist_ok=True)
 REGISTRY_FILE = FILES_DIR.parent / "registry.json"
+PROJECTS_DIR = FILES_DIR.parent / "projects"
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+PROJECTS_REGISTRY_FILE = FILES_DIR.parent / "projects_registry.json"
 
 _storage_backend = os.getenv("STORAGE_BACKEND", "local").strip().lower()
 try:
@@ -63,6 +70,25 @@ _files: dict = {}
 # Undo/redo stacks {file_id: [snapshot_path, ...]}
 _undo_stacks: dict[str, list[str]] = {}
 _redo_stacks: dict[str, list[str]] = {}
+
+# In-memory project registry {project_id: {dir, name, main_file}}
+_projects: dict = {}
+
+
+def _save_projects_registry() -> None:
+    PROJECTS_REGISTRY_FILE.write_text(json.dumps({"projects": _projects}))
+
+
+def _load_projects_registry() -> None:
+    if not PROJECTS_REGISTRY_FILE.exists():
+        return
+    try:
+        data = json.loads(PROJECTS_REGISTRY_FILE.read_text())
+        for pid, info in data.get("projects", {}).items():
+            if "dir" in info and Path(info["dir"]).exists():
+                _projects[pid] = info
+    except Exception:
+        logger.exception("failed to load projects registry path=%s", PROJECTS_REGISTRY_FILE)
 
 
 def _save_registry() -> None:
@@ -98,6 +124,7 @@ def _load_registry() -> None:
 
 
 _load_registry()
+_load_projects_registry()
 logger.info(
     "backend initialized storage_backend=%s tracked_files=%d slide_renderer_available=%s slide_renderer_backend=%s",
     _storage_backend,
@@ -246,12 +273,46 @@ class ApplyRequest(BaseModel):
     revisions: list[ApplyRevision]
 
 
+class ProjectAgentRequest(BaseModel):
+    project_id: str
+    instruction: str
+    llm: LLMConfig
+
+
+class ProjectFileEdit(BaseModel):
+    path: str
+    revised: str
+
+
+class ProjectApplyRequest(BaseModel):
+    project_id: str
+    edits: list[ProjectFileEdit]
+
+
+class ProjectMainFileRequest(BaseModel):
+    project_id: str
+    main_file: str
+
+
 # ---------- Helpers ----------
 
 def _get_file(file_id: str) -> dict:
     if file_id not in _files:
         raise HTTPException(404, "File not found. Please re-upload.")
     return _files[file_id]
+
+
+# File types that are parsed into a flat list of editable text blocks/paragraphs.
+TEXT_DOCUMENT_TYPES = ("docx", "markdown", "latex")
+
+
+def _parse_text_structure(file_type: str, file_path: str) -> dict:
+    """Parse a text-document file type into its {paragraphs, total} structure."""
+    if file_type == "docx":
+        return parse_docx(file_path)
+    if file_type == "latex":
+        return parse_latex(file_path)
+    return parse_markdown(file_path)
 
 
 def _slide_cache_dir(file_id: str) -> Path:
@@ -309,14 +370,19 @@ async def bind_request_logging_context(request: Request, call_next):
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     ext = Path(file.filename).suffix.lower()
-    if ext not in (".docx", ".pptx", ".md", ".markdown"):
-        raise HTTPException(400, "Only .docx, .pptx, and markdown files are supported.")
+    if ext not in (".docx", ".pptx", ".md", ".markdown", ".tex", ".latex"):
+        raise HTTPException(400, "Only .docx, .pptx, markdown, and LaTeX files are supported.")
 
     file_id = str(uuid.uuid4())
     file_path = FILES_DIR / f"{file_id}{ext}"
     payload = await file.read()
     file_path.write_bytes(payload)
-    file_type = "markdown" if ext in (".md", ".markdown") else ext[1:]
+    if ext in (".md", ".markdown"):
+        file_type = "markdown"
+    elif ext in (".tex", ".latex"):
+        file_type = "latex"
+    else:
+        file_type = ext[1:]
     file_info = {"path": str(file_path), "type": file_type, "name": file.filename}
     if _storage_backend == "s3":
         storage = _require_storage()
@@ -393,6 +459,7 @@ _SYSTEM_PROMPT = (
     "  For DOCX and PPTX, revised_text must be plain text. "
     "  In DOCX text, placeholders like [EQUATION_1] represent Word math equations; preserve each placeholder exactly and keep it in its original relative position. "
     "  For Markdown files, revised_text must be markdown source text. "
+    "  For LaTeX files, revised_text must be valid LaTeX source text; preserve commands, math, and environment delimiters (\\begin{...}/\\end{...}) and only change what the instruction requires. "
     "  Never include HTML or XML unless the original content already uses it. "
     "  Alignment: left | center | right | justify. "
     "— For DOCX or Markdown, to ADD a new paragraph/block: call insert_paragraph with the target paragraph index and text. "
@@ -521,7 +588,8 @@ _FORMAT_PROPS = {
 }
 
 _REVISED_TEXT_DESCRIPTION = (
-    "The revised text. Use plain text for DOCX/PPTX and markdown source for Markdown files. "
+    "The revised text. Use plain text for DOCX/PPTX, markdown source for Markdown files, "
+    "and valid LaTeX source for LaTeX files. "
     "Never return HTML or XML. Preserve DOCX equation placeholders like [EQUATION_1] exactly."
 )
 
@@ -710,6 +778,7 @@ async def _do_revise(req, file_type, file_path, llm):
             original, req.instruction,
             llm.provider, llm.model, llm.base_url, llm.api_key, llm.timeout,
             allow_markdown=file_type == "markdown",
+            allow_latex=file_type == "latex",
         )
 
     def append_insert_table_revision(
@@ -743,8 +812,8 @@ async def _do_revise(req, file_type, file_path, llm):
 
     revisions = []
 
-    if file_type in ("docx", "markdown"):
-        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
+    if file_type in TEXT_DOCUMENT_TYPES:
+        structure = _parse_text_structure(file_type, file_path)
         paragraphs = structure["paragraphs"]
 
         if req.scope.type == "document":
@@ -1404,6 +1473,8 @@ async def apply(req: ApplyRequest):
         apply_docx_revisions(file_path, file_path, rev_dicts)
     elif file_type == "markdown":
         apply_markdown_revisions(file_path, file_path, rev_dicts)
+    elif file_type == "latex":
+        apply_latex_revisions(file_path, file_path, rev_dicts)
     else:
         apply_pptx_revisions(file_path, file_path, rev_dicts)
 
@@ -1719,8 +1790,8 @@ def _extract_selected_text(
     if scope.type == "document":
         return None
 
-    if file_type in ("docx", "markdown"):
-        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
+    if file_type in TEXT_DOCUMENT_TYPES:
+        structure = _parse_text_structure(file_type, file_path)
         paragraphs = structure["paragraphs"]
         if scope.type == "paragraphs" and scope.paragraph_indices:
             idx_set = set(scope.paragraph_indices)
@@ -1762,8 +1833,8 @@ def _extract_selected_text(
 
 
 def _document_text(file_id: str, file_type: str, file_path: str) -> str:
-    if file_type in ("docx", "markdown"):
-        structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
+    if file_type in TEXT_DOCUMENT_TYPES:
+        structure = _parse_text_structure(file_type, file_path)
         return "\n\n".join(
             p["text"] for p in structure["paragraphs"] if p["text"].strip()
         )
@@ -1981,8 +2052,8 @@ async def extract_document_graph(req: GraphRequest):
     file_path = _ensure_local_file(req.file_id)
 
     def _para_index_map_single(file_id: str, file_type: str, fpath: str) -> list[tuple[int, str]]:
-        if file_type in ("docx", "markdown"):
-            structure = parse_docx(fpath) if file_type == "docx" else parse_markdown(fpath)
+        if file_type in TEXT_DOCUMENT_TYPES:
+            structure = _parse_text_structure(file_type, fpath)
             return [(p["index"], p["text"]) for p in structure["paragraphs"] if p["text"].strip()]
         structure = parse_pptx(fpath, _pptx_asset_resolver(file_id))
         return [
@@ -2020,8 +2091,8 @@ async def compare_entities(req: CompareEntitiesRequest):
     file_path_b = _ensure_local_file(req.file_b_id)
 
     def _para_index_map(file_id: str, file_type: str, file_path: str) -> list[tuple[int, str]]:
-        if file_type in ("docx", "markdown"):
-            structure = parse_docx(file_path) if file_type == "docx" else parse_markdown(file_path)
+        if file_type in TEXT_DOCUMENT_TYPES:
+            structure = _parse_text_structure(file_type, file_path)
             return [(p["index"], p["text"]) for p in structure["paragraphs"] if p["text"].strip()]
         structure = parse_pptx(file_path, _pptx_asset_resolver(file_id))
         result = []
@@ -2073,6 +2144,167 @@ async def compare_entities(req: CompareEntitiesRequest):
     }
 
 
+# ---------- Projects (agentic multi-file editing) ----------
+
+def _get_project(project_id: str) -> dict:
+    if project_id not in _projects:
+        raise HTTPException(404, "Project not found. Please re-upload.")
+    return _projects[project_id]
+
+
+def _project_response(project_id: str) -> dict:
+    info = _get_project(project_id)
+    files = projects.list_project_files(info["dir"])
+    return {
+        "project_id": project_id,
+        "name": info["name"],
+        "main_file": info.get("main_file"),
+        "files": files,
+    }
+
+
+@app.post("/api/projects/upload")
+async def upload_project(
+    files: list[UploadFile] = File(...),
+    paths: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+):
+    """Create a project from a folder (multiple files + their relative paths)
+    or a single .zip archive."""
+    project_id = str(uuid.uuid4())
+    project_dir = PROJECTS_DIR / project_id
+
+    rel_paths: list[str] = []
+    if paths:
+        try:
+            rel_paths = json.loads(paths)
+        except Exception:
+            rel_paths = []
+
+    payloads = [await f.read() for f in files]
+
+    try:
+        if len(files) == 1 and files[0].filename and files[0].filename.lower().endswith(".zip"):
+            stored = projects.extract_zip(project_dir, payloads[0])
+            default_name = Path(files[0].filename).stem
+        else:
+            named: list[tuple[str, bytes]] = []
+            for i, f in enumerate(files):
+                rel = rel_paths[i] if i < len(rel_paths) and rel_paths[i] else (f.filename or f"file_{i}")
+                named.append((rel, payloads[i]))
+            stored = projects.create_project_from_files(project_dir, named)
+            default_name = Path(rel_paths[0]).parts[0] if rel_paths and "/" in rel_paths[0] else "Project"
+    except Exception as exc:
+        shutil.rmtree(project_dir, ignore_errors=True)
+        logger.exception("project upload failed project_id=%s", project_id)
+        raise HTTPException(422, f"Failed to read uploaded project: {exc}") from exc
+
+    if not stored:
+        shutil.rmtree(project_dir, ignore_errors=True)
+        raise HTTPException(400, "No usable files were found in the upload.")
+
+    main_file = projects.detect_main_tex(project_dir, stored)
+    _projects[project_id] = {
+        "dir": str(project_dir),
+        "name": name or default_name or "Project",
+        "main_file": main_file,
+    }
+    _save_projects_registry()
+    logger.info("project uploaded project_id=%s files=%d main_file=%s", project_id, len(stored), main_file)
+    return _project_response(project_id)
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    return _project_response(project_id)
+
+
+@app.get("/api/projects/{project_id}/file")
+async def get_project_file(project_id: str, path: str):
+    info = _get_project(project_id)
+    try:
+        content = projects.read_text(info["dir"], path)
+    except FileNotFoundError:
+        raise HTTPException(404, "File not found in project.")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"path": path, "content": content}
+
+
+@app.post("/api/projects/main-file")
+async def set_project_main_file(req: ProjectMainFileRequest):
+    info = _get_project(req.project_id)
+    files = projects.list_project_files(info["dir"])
+    if req.main_file not in files:
+        raise HTTPException(400, "main_file is not part of the project.")
+    info["main_file"] = req.main_file
+    _save_projects_registry()
+    return _project_response(req.project_id)
+
+
+@app.post("/api/projects/agent")
+async def run_project_agent_endpoint(req: ProjectAgentRequest):
+    info = _get_project(req.project_id)
+    llm = req.llm
+    logger.info(
+        "project agent started project_id=%s provider=%s model=%s",
+        req.project_id, llm.provider, llm.model,
+    )
+    try:
+        result = run_project_agent(
+            info["dir"],
+            info.get("main_file"),
+            req.instruction,
+            llm.provider,
+            llm.model,
+            llm.base_url,
+            llm.api_key,
+            llm.timeout,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(408, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("project agent failed project_id=%s", req.project_id)
+        raise HTTPException(500, str(exc)) from exc
+    return result
+
+
+@app.post("/api/projects/apply")
+async def apply_project_edits(req: ProjectApplyRequest):
+    info = _get_project(req.project_id)
+    applied: list[str] = []
+    for edit in req.edits:
+        try:
+            projects.write_text(info["dir"], edit.path, edit.revised)
+            applied.append(edit.path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    _save_projects_registry()
+    logger.info("project edits applied project_id=%s files=%d", req.project_id, len(applied))
+    return {**_project_response(req.project_id), "applied": applied}
+
+
+@app.get("/api/projects/{project_id}/download")
+async def download_project(project_id: str):
+    info = _get_project(project_id)
+    data = projects.zip_project(info["dir"])
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{info["name"]}.zip"'},
+    )
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    if project_id in _projects:
+        shutil.rmtree(_projects[project_id]["dir"], ignore_errors=True)
+        del _projects[project_id]
+        _save_projects_registry()
+    logger.info("project deleted project_id=%s", project_id)
+    return {"ok": True}
+
+
 # ---------- Internal ----------
 
 def _build_response(file_id: str) -> dict:
@@ -2103,6 +2335,12 @@ def _build_response(file_id: str) -> dict:
             **base,
             "file_type": "markdown",
             "structure": parse_markdown(file_path),
+        }
+    if file_type == "latex":
+        return {
+            **base,
+            "file_type": "latex",
+            "structure": parse_latex(file_path),
         }
     else:
         return {
