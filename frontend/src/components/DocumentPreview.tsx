@@ -1600,7 +1600,7 @@ export default function DocumentPreview({
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-100">
         {ManualToolbar()}
-        <div className="flex-1 relative overflow-hidden">
+        <div className="flex-1 relative overflow-hidden min-h-0">
           <ZoomControls />
           <div
             ref={(node) => {

@@ -4,8 +4,16 @@ from dataclasses import dataclass
 
 _BEGIN_RE = re.compile(r"\\begin\{([^}]*)\}")
 _END_RE = re.compile(r"\\end\{([^}]*)\}")
+# An unescaped % starts a comment that runs to end of line.
+_COMMENT_RE = re.compile(r"(?<!\\)%.*$")
 _HEADING_RE = re.compile(
     r"^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph|title|author|date|maketitle)\b"
+)
+# Single-line commands that should always form their own selectable block,
+# separated from surrounding prose (headings and \maketitle). \title/\author/
+# \date are intentionally excluded so they stay grouped with the preamble.
+_STANDALONE_RE = re.compile(
+    r"^\\(part|chapter|section|subsection|subsubsection|paragraph|subparagraph|maketitle)\b"
 )
 
 _MATH_ENV = {
@@ -21,6 +29,9 @@ _NON_NESTING_ENVS = {"document"}
 
 
 def _depth_delta(line: str) -> int:
+    # Ignore commented-out \begin/\end so a stray "% \begin{figure}" does not
+    # leave the environment depth stuck above zero for the rest of the document.
+    line = _COMMENT_RE.sub("", line)
     begins = [env for env in _BEGIN_RE.findall(line) if env not in _NON_NESTING_ENVS]
     ends = [env for env in _END_RE.findall(line) if env not in _NON_NESTING_ENVS]
     return len(begins) - len(ends)
@@ -34,8 +45,18 @@ class LatexBlock:
 
 
 def read_latex_text(file_path: str) -> str:
-    with open(file_path, "r", encoding="utf-8") as f:
-        return f.read()
+    # LaTeX sources are commonly UTF-8 but legacy files are often Latin-1
+    # (accented characters, inputenc latin1). Try the most likely encodings in
+    # order before falling back to a lossless byte-preserving decode.
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    # latin-1 decodes any byte sequence, so this is effectively unreachable.
+    return raw.decode("latin-1", errors="replace")
 
 
 def detect_newline(text: str) -> str:
@@ -79,8 +100,13 @@ def classify_latex_block(text: str) -> str:
 
 
 def split_latex_blocks(text: str) -> list[str]:
-    """Split LaTeX source into blocks on blank lines, keeping \\begin..\\end
-    environments intact even when they contain blank lines."""
+    """Split LaTeX source into independently selectable blocks.
+
+    Blocks break on blank lines (so soft-wrapped prose stays together) and also
+    at structural boundaries — headings, \\maketitle, and the start/end of
+    top-level environments and the document — so a heading is not fused to the
+    paragraph that follows it. \\begin..\\end environments stay intact even when
+    they span blank lines."""
     normalized = normalize_newlines(text)
     if not normalized.strip():
         return []
@@ -89,20 +115,44 @@ def split_latex_blocks(text: str) -> list[str]:
     current: list[str] = []
     depth = 0
 
+    def flush() -> None:
+        nonlocal current
+        if current:
+            blocks.append("\n".join(current).strip("\n"))
+            current = []
+
     for line in normalized.split("\n"):
-        if depth == 0 and not line.strip():
-            if current:
-                blocks.append("\n".join(current).strip("\n"))
-                current = []
+        stripped = line.strip()
+
+        if depth == 0 and not stripped:
+            flush()
             continue
+
+        # At the top level, start a new block before a structural line so it is
+        # not glued onto the preceding paragraph.
+        if depth == 0 and current and (
+            _STANDALONE_RE.match(stripped)
+            or _BEGIN_RE.match(stripped)
+            or _END_RE.match(stripped)
+        ):
+            flush()
 
         current.append(line)
         depth += _depth_delta(line)
         if depth < 0:
             depth = 0
 
-    if current:
-        blocks.append("\n".join(current).strip("\n"))
+        # Once back at the top level, close the block after a standalone command
+        # or after an environment / document boundary so following prose starts
+        # its own block.
+        if depth == 0 and (
+            _STANDALONE_RE.match(stripped)
+            or _BEGIN_RE.match(stripped)
+            or _END_RE.match(stripped)
+        ):
+            flush()
+
+    flush()
 
     return [block for block in blocks if block.strip()]
 
