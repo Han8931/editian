@@ -7,11 +7,20 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 const UPLOAD_TIMEOUT_MS = 60_000
 
 async function apiError(res: Response): Promise<Error> {
+  // Read the body once: the stream can only be consumed a single time, so
+  // calling res.json() then res.text() throws "Body has already been consumed"
+  // and masks the real error. Read text, then try to parse it as JSON.
+  let raw: string
   try {
-    const body = await res.json()
-    return new Error(body.detail ?? 'Something went wrong.')
+    raw = await res.text()
   } catch {
-    return new Error(await res.text() || 'Something went wrong.')
+    return new Error(`Request failed (${res.status} ${res.statusText}).`)
+  }
+  try {
+    const body = JSON.parse(raw)
+    return new Error(body.detail ?? (raw || 'Something went wrong.'))
+  } catch {
+    return new Error(raw || `Request failed (${res.status} ${res.statusText}).`)
   }
 }
 
