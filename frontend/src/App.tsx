@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Undo2, Redo2, X } from 'lucide-react'
 import FileUpload from './components/FileUpload'
 import DocumentPreview from './components/DocumentPreview'
 import Sidebar from './components/Sidebar'
@@ -562,6 +562,7 @@ export default function App() {
               <button
                 key={nextMode}
                 onClick={() => setAppMode(nextMode)}
+                aria-pressed={appMode === nextMode}
                 className={`px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
                   appMode === nextMode
                     ? 'bg-blue-500 text-white shadow-sm'
@@ -591,7 +592,8 @@ export default function App() {
                   onContextMenu={swallowPointerEvent}
                   disabled={!doc.can_undo}
                   title={`${msg('undo')} (⌘Z)`}
-                  className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↩</button>
+                  aria-label={msg('undo')}
+                  className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><Undo2 size={14} /></button>
                 <button
                   type="button"
                   onPointerDown={(e) => {
@@ -604,12 +606,12 @@ export default function App() {
                   onContextMenu={swallowPointerEvent}
                   disabled={!doc.can_redo}
                   title={`${msg('redo')} (⌘⇧Z)`}
-                  className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm">↪</button>
+                  aria-label={msg('redo')}
+                  className="w-7 h-7 flex items-center justify-center rounded text-gray-500 hover:text-gray-800 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"><Redo2 size={14} /></button>
               </div>
               <div className="w-px h-4 bg-gray-200" />
             </>
           )}
-          {doc && appMode !== 'compare' && <div className="w-px h-4 bg-gray-200" />}
           {doc && appMode !== 'compare' && (
             <div className="relative">
               <button onClick={openDownload} className="text-sm text-blue-500 hover:text-blue-700 font-medium transition-colors">{msg('download')}</button>
@@ -639,7 +641,7 @@ export default function App() {
       {editError && (
         <div className="flex-shrink-0 bg-red-50 border-b border-red-200 px-5 py-2 flex items-center gap-3 text-sm text-red-700 z-10">
           <span className="flex-1">{editError}</span>
-          <button onClick={() => setEditError(null)} className="text-red-400 hover:text-red-600 font-medium">✕</button>
+          <button onClick={() => setEditError(null)} aria-label={msg('close')} className="text-red-400 hover:text-red-600 transition-colors flex items-center justify-center"><X size={14} /></button>
         </div>
       )}
 
@@ -693,7 +695,7 @@ export default function App() {
             </div>
 
             <div
-              className="w-1 flex-shrink-0 bg-gray-700 hover:bg-blue-500 active:bg-blue-600 cursor-col-resize transition-colors"
+              className="w-1 flex-shrink-0 bg-gray-200 hover:bg-blue-400 active:bg-blue-500 cursor-col-resize transition-colors"
               onMouseDown={() => {
                 isDraggingWorkspace.current = true
                 document.body.style.cursor     = 'col-resize'

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type CSSProperties } from 'react'
-import { Settings2, ArrowLeft, Sparkles, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check, RotateCcw, Network, AlertCircle, MousePointer, Zap } from 'lucide-react'
+import { Settings2, ArrowLeft, Sparkles, MessageSquare, PenLine, CornerDownLeft, Trash2, Loader2, Copy, Check, RotateCcw, Network, AlertCircle, MousePointer, Zap, BookOpen } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { UploadResponse, LLMConfig, RevisionScope, Revision, PptxStructure, ChatMessage, SingleDocGraphData } from '../types'
@@ -188,8 +188,7 @@ export default function Sidebar({
 
   // ── Chat tab handlers ──────────────────────────────────────────────────
 
-  async function handleChat() {
-    const text = chatInput.trim()
+  async function sendChatMessage(text: string) {
     if (!text || chatLoading) return
     const scope = buildScope()
     const hasSelection = scope.type !== 'document'
@@ -198,7 +197,6 @@ export default function Sidebar({
     // Add placeholder assistant message immediately so the bubble appears
     const withPlaceholder: ChatMessage[] = [...nextMessages, { role: 'assistant', content: '' }]
     setChatMessages(withPlaceholder)
-    setChatInput('')
     setChatLoading(true)
     setChatError(null)
     try {
@@ -226,6 +224,20 @@ export default function Sidebar({
     } finally {
       setChatLoading(false)
     }
+  }
+
+  async function handleChat() {
+    const text = chatInput.trim()
+    if (!text || chatLoading) return
+    setChatInput('')
+    await sendChatMessage(text)
+  }
+
+  // Ask the AI to explain the document — focuses on the selection when one exists.
+  async function handleExplain() {
+    if (chatLoading) return
+    const hasSelection = buildScope().type !== 'document'
+    await sendChatMessage(hasSelection ? msg('explainSelectionPrompt') : msg('explainDocumentPrompt'))
   }
 
   async function handleRetry() {
@@ -355,6 +367,7 @@ export default function Sidebar({
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
+                  aria-pressed={activeTab === tab}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
                     activeTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
@@ -515,6 +528,16 @@ export default function Sidebar({
                 </div>
                 <p className="text-sm font-medium text-gray-600">{msg('askAnything')}</p>
                 <p className="text-xs text-gray-400 leading-relaxed">{msg('chatEmptyState')}</p>
+                <button
+                  onClick={handleExplain}
+                  disabled={chatLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <BookOpen size={12} />
+                  <span className="text-xs font-medium">
+                    {selectionLabel ? msg('explainSelection') : msg('explainThisDocument')}
+                  </span>
+                </button>
                 {graphData && (
                   <button
                     onClick={() => setGraphContextEnabled(e => !e)}
@@ -661,6 +684,14 @@ export default function Sidebar({
                 <Trash2 size={14} />
               </button>
             )}
+            <button
+              onClick={handleExplain}
+              disabled={chatLoading}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-blue-500 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+              title={selectionLabel ? msg('explainSelection') : msg('explainThisDocument')}
+            >
+              <BookOpen size={15} />
+            </button>
             <SkillPicker
               className="border border-gray-200 rounded-xl bg-gray-50 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300 focus:bg-white transition-all placeholder-gray-400 max-h-32 w-full"
               rows={1}

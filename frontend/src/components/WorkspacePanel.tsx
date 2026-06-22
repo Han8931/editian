@@ -299,6 +299,8 @@ export default function WorkspacePanel({
               }`}>
                 <button
                   onClick={() => toggleCollapse(dir.id)}
+                  aria-label={isOpen ? msg('collapseFolder') : msg('expandFolder')}
+                  aria-expanded={isOpen}
                   className="flex-shrink-0 text-gray-600 hover:text-gray-300 transition-colors"
                 >
                   {isOpen
