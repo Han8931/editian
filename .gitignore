@@ -21,6 +21,11 @@ dist/
 wheels/
 *.egg-info/
 
+# Docker image archives for air-gapped transfer
+*.tar
+*.tar.gz
+*.tgz
+
 # Environment files
 .env
 .env.*
