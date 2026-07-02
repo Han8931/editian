@@ -25,6 +25,7 @@ wheels/
 *.tar
 *.tar.gz
 *.tgz
+Dockerfile
 
 # Environment files
 .env
@@ -43,3 +44,7 @@ sample_report.docx
 .DS_Store
 .idea/
 .vscode/
+
+# Certs
+scripts/
+scripts/certs/
